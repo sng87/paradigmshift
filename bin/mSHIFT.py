@@ -5,8 +5,6 @@ import liblinearutil
 
 import mData, mCalculate
 
-alpha = 0.05
-
 def log(msg, die = False):
     """logger function"""
     sys.stderr.write(msg)
@@ -453,7 +451,7 @@ def mean(inList, null = "NA"):
         mean = sum(fList)/len(fList)
     return (mean)
 
-def ttest(values0, values1):
+def ttest(values0, values1, alpha = 0.05):
     (mean0, std0) = mCalculate.mean_std(values0)
     (mean1, std1) = mCalculate.mean_std(values1)
     try:
@@ -487,7 +485,7 @@ def kstest(values0, values1):
     ks.close()
     return(ksval)
 
-def computeSignal(group0, group1, data, method = 1):
+def mutSeparation(group0, group1, data, method = "tt"):
     """computes the signal score from shiftScore"""
     values0 = []
     values1 = []
@@ -498,10 +496,12 @@ def computeSignal(group0, group1, data, method = 1):
             values0.append(data[i])
         elif i in group1:
             values1.append(data[i])
-    if method == 0:
+    if method == "tt":
         val = ttest(values0, values1)
-    else:
+    elif method == "ks":
         val = kstest(values0, values1)
+    else:
+        val = "NA"
     return(val)
 
 def absScores(scoreMap):
@@ -735,3 +735,197 @@ def selectMutationNeighborhood(focusGene, mutSamples, dataFile, gPathway, trainS
     wPathway("upstream_pathway.tab", upPathway.nodes, upPathway.interactions)
     wPathway("downstream_pathway.tab", downPathway.nodes, downPathway.interactions)
     return(upPathway, downPathway, hasUpstream and hasDownstream)
+
+def shiftCV(mutatedGene, mutatedSamples, dataSamples, trainSamples, uPathway, dPathway, 
+            nNulls = 10, msepMethod = "tt", alpha = 0.05, avgAUC = None, mutsigFile = None):
+    ## read paradigm output
+    upScore = mData.rPARADIGM("%s_upstream.fa" % (mutatedGene), useRows = uPathway.nodes.keys())[1]
+    downScore = mData.rPARADIGM("%s_downstream.fa" % (mutatedGene), useRows = dPathway.nodes.keys())[1]
+    mData.wCRSData("paradigm_up.tab", upScore)
+    mData.wCRSData("paradigm_down.tab", downScore)
+    n_upScore = {}
+    n_downScore = {}
+    for null in range(1, nNulls+1):
+        n_upScore[null] = mData.rPARADIGM("N%s_%s_upstream.fa" % (null, mutatedGene), useRows = [mutatedGene])[1]
+        n_downScore[null] = mData.rPARADIGM("N%s_%s_downstream.fa" % (null, mutatedGene), useRows = [mutatedGene])[1]
+    f = open("up.features", "w")
+    for feature in (set(upScore[upScore.keys()[0]].keys()) - set([mutatedGene])):
+        f.write("%s\n" % (feature))
+    f.close()
+    f = open("down.features", "w")
+    for feature in (set(downScore[downScore.keys()[0]].keys()) - set([mutatedGene])):
+        f.write("%s\n" % (feature))
+    f.close()
+    f = open("mut.features", "w")
+    f.write("%s\n" % (mutatedGene))
+    f.close()
+    
+    ## define sample groups
+    trainGroup = trainSamples
+    testGroup = list(set(dataSamples) - set(trainSamples))
+    mutGroup = mutatedSamples
+    nonGroup = list(set(dataSamples) - set(mutatedSamples))
+    permGroup = ["perm_%s" % (sample) for sample in mutGroup]
+    mutGroup_tr = list(set(mutGroup) & set(trainGroup))
+    mutGroup_te = list(set(mutGroup) & set(testGroup))
+    nonGroup_tr = list(set(nonGroup) & set(trainGroup))
+    nonGroup_te = list(set(nonGroup) & set(testGroup))
+    permGroup_tr = ["perm_%s" % (sample) for sample in mutGroup_tr]
+    permGroup_te = ["perm_%s" % (sample) for sample in mutGroup_te]
+    backGroup = []
+    for sample in mutGroup:
+        for null in range(1, nNulls+1):
+            backGroup.append("null%s_%s" % (null, sample))
+    f = open("include.samples", "w")
+    for sample in (mutGroup_tr + nonGroup_tr):
+        f.write("%s\n" % (sample))
+    f.close()
+    f = open("mut.circle", "w")
+    f.write("id\t%s\n" % ("\t".join(mutGroup_tr + nonGroup_tr + permGroup_tr)))
+    f.write("*")
+    for sample in (mutGroup_tr + nonGroup_tr + permGroup_tr):
+        if sample in mutGroup:
+            f.write("\t1")
+        elif sample in nonGroup:
+            f.write("\t0")
+        else:
+            f.write("\t0.5")
+    f.write("\n")
+    f.close()
+    
+    ## score shifts      
+    shiftScore = {}
+    for sample in (mutGroup + nonGroup + permGroup):
+        shiftScore[sample] = downScore[sample][mutatedGene] - upScore[sample][mutatedGene]
+    for sample in (mutGroup + nonGroup + permGroup):
+        for null in range(1, nNulls+1):
+            shiftScore["null%s_%s" % (null, sample)] = n_downScore[null][sample][mutatedGene] - n_upScore[null][sample][mutatedGene]   
+    f = open("shift.circle", "w")
+    f.write("id\t%s\n" % ("\t".join(mutGroup_tr + nonGroup_tr + permGroup_tr)))
+    f.write("*")
+    for sample in (mutGroup_tr + nonGroup_tr + permGroup_tr):
+        f.write("\t%s" % (shiftScore[sample]))
+    f.write("\n")
+    f.close()
+    
+    ## compute CV statistics
+    (nonMean, nonStd) = mCalculate.mean_std([shiftScore[sample] for sample in nonGroup_tr])
+    (permMean, permStd) = mCalculate.mean_std([shiftScore[sample] for sample in permGroup_tr])
+    labelMap = {}
+    nonScore_tr = {}
+    nonScore_te = {}
+    f = open("mut.train.scores", "w")
+    for sample in mutGroup_tr:
+        labelMap[sample] = 1
+        nonScore_tr[sample] = (shiftScore[sample]-nonMean)
+        f.write("%s\t%s\n" % (sample, nonScore_tr[sample]))
+    f.close()
+    f = open("non.train.scores", "w")
+    for sample in nonGroup_tr:
+        labelMap[sample] = 0
+        nonScore_tr[sample] = (shiftScore[sample]-nonMean)
+        f.write("%s\t%s\n" % (sample, nonScore_tr[sample]))
+    f.close()
+    f = open("mut.test.scores", "w")
+    for sample in mutGroup_te:
+        labelMap[sample] = 1
+        nonScore_te[sample] = (shiftScore[sample]-nonMean)
+        f.write("%s\t%s\n" % (sample, nonScore_te[sample]))
+    f.close()
+    f = open("non.test.scores", "w")
+    for sample in nonGroup_te:
+        labelMap[sample] = 0
+        nonScore_te[sample] = (shiftScore[sample]-nonMean)
+        f.write("%s\t%s\n" % (sample, nonScore_te[sample]))
+    f.close()
+    
+    ## compute auc from stats
+    sorted_tr = nonScore_tr.keys()
+    sorted_tr.sort(lambda x, y: cmp(nonScore_tr[y],nonScore_tr[x]))
+    auc_tr = computeAUC(sorted_tr, labelMap, nonScore_tr)[0]
+    if len(testGroup) > 0:
+        sorted_te = nonScore_te.keys()
+        sorted_te.sort(lambda x, y: cmp(nonScore_te[y],nonScore_te[x]))
+        auc_te = computeAUC(sorted_te, labelMap, nonScore_te)[0]
+    else:
+        auc_te = "NA"
+    f = open("auc.stat", "w")
+    f.write("%s\t%s\n" % (auc_tr, auc_te))
+    f.close()
+    
+    ## compute mutant separation
+    msepScore = {}
+    msepScore["real"] = mutSeparation(nonGroup_tr, mutGroup_tr, shiftScore, method = msepMethod)
+    for null in range(1, nNulls+1):
+        msepScore["null%s" % (null)] = mutSeparation(["null%s_%s" % (null, sample) 
+                                                     for sample in nonGroup_tr],
+                                                     ["null%s_%s" % (null, sample)
+                                                     for sample in mutGroup_tr],
+                                                     shiftScore, method = msepMethod)
+    f = open("real.scores", "w")
+    f.write("%s\n" % (msepScore["real"]))
+    f.close()
+    f = open("null.scores", "w")
+    for null in range(1, nNulls+1):
+        f.write("%s\n" % (msepScore["null%s" % (null)]))
+    f.close()
+    
+    ## compute background significance
+    realScores = [msepScore["real"]]
+    nullScores = [msepScore[null] for null in list(set(msepScore.keys()) - set(["real"]))]
+    (nullMean, nullStd) = mCalculate.mean_std(nullScores)
+    significanceScore = (realScores[0]-nullMean)/(nullStd+alpha)
+    
+    ## output sig.stats
+    if avgAUC is not None:
+        mutsigData = {}
+        if mutsigFile is not None:
+            mutsigData = mData.rCRSData(mutsigFile)["p"]
+        if mutatedGene in mutsigData:
+            mutVal = mutsigData[mutatedGene]
+        else:
+            mutVal = "NA"
+        f = open("sig.stats", "w")
+        f.write("%s\t%s\t%s\t%s\t%s\t%s\n" % (mutatedGene, len(nonGroup_tr), len(mutGroup_tr), 
+                                              avgAUC, significanceScore, str(mutVal).lstrip("<")))
+        f.close()
+    
+def computeAUC(features, labelMap, scoreMap):
+    points = []
+    auc = 0.0
+    x = 0.0
+    index = 0
+    while (index <= len(features)):
+        (tp, fn, fp, tn) = getConfusion(index, features, labelMap)
+        tpr = tp/float(tp+fn)
+        fpr = fp/float(fp+tn)
+        points.append( (fpr, tpr) )
+        if fpr > x:
+            dx = fpr - x
+            x = fpr
+            auc += dx*tpr
+        index += 1
+        if index < len(features):
+            while (scoreMap[features[index-1]] == scoreMap[features[index]]):
+                index += 1
+                if index == len(features):
+                    break
+        elif index == len(features):
+            pass
+        else:
+            break
+    return(auc, points)
+
+def getConfusion(index, features, labelMap):
+    (tp, fn, fp, tn) = (0, 0, 0, 0)
+    for feature in features[:index]:
+        if labelMap[feature] == 1:
+            tp += 1
+        elif labelMap[feature] == 0:
+            fp += 1
+    for feature in features[index:]:
+        if labelMap[feature] == 1:
+            fn += 1
+        elif labelMap[feature] == 0:
+            tn += 1
+    return(tp, fn, fp, tn)
