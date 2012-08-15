@@ -396,11 +396,9 @@ class branchParams(Target):
             os.chdir(shiftDir)
         
         ## average cross validation aucs for final run
-        avgAUC = None
         if self.fold == 0:
             aucList = []
-            o = open("auc.stats", "w")
-            o.write("fold\ttrain\ttest\n")
+            aucLines = []
             for r in range(1, rRepeats+1):
                 for f in range(1, mFolds+1):
                     fold = (r-1)*mFolds+f
@@ -409,9 +407,13 @@ class branchParams(Target):
                     f.close()
                     (auc_tr, auc_te, mparams) = re.split("\t", line.rstrip("\r\n"))
                     aucList.append(auc_te)
-                    o.write("%s\t%s\t%s\t%s\n" % (fold, auc_tr, auc_te, mparams))
+                    aucLines.append("%s\t%s\t%s\t%s\n" % (fold, auc_tr, auc_te, mparams))
+            o = open("avg.tab", "w")
+            o.write("> %s\tavgAUC:%s\n" % (self.mutatedSamples, mean(aucList)))
+            o.write("# fold\ttrain\ttest\tparams\n")
+            for line in aucLines:
+                o.write(line)
             o.close()
-            avgAUC = mean(aucList)
         
         ## branch params
         for dist in paramMap["dist"]:
@@ -420,18 +422,18 @@ class branchParams(Target):
                     for method in paramMap["method"]:
                         system("mkdir param_%s_%s_%s_%s" % (dist, thresh, inc, method))
                         os.chdir("param_%s_%s_%s_%s" % (dist, thresh, inc, method))
-                        system("ln -s %s/config.txt config.txt" % (self.paradigmDir))
-                        system("ln -s %s/params.txt params.txt" % (self.paradigmDir))
+                        system("cp %s/config.txt config.txt" % (self.paradigmDir))
+                        system("cp %s/params.txt params.txt" % (self.paradigmDir))
                         for file in os.listdir(self.paradigmDir):
                             if file.endswith(".imap"):
-                                system("ln -s %s/%s %s" % (self.paradigmDir, file, file))
+                                system("cp %s/%s %s" % (self.paradigmDir, file, file))
                             elif file.endswith(".dogma"):
-                                system("ln -s %s/%s %s" % (self.paradigmDir, file, file))
+                                system("cp %s/%s %s" % (self.paradigmDir, file, file))
                         os.chdir("..")
                         self.addChildTarget(prepareNeighborhood(self.fold, self.mutatedGene, 
                                                     self.mutatedSamples, self.dataSamples, 
                                                     self.trainSamples, dist, thresh, inc, method,
-                                                    self.dataMap, self.gPathway, avgAUC, 
+                                                    self.dataMap, self.gPathway, 
                                                     self.directory))
         
         ## evaluate models
@@ -442,7 +444,7 @@ class branchParams(Target):
         
 class prepareNeighborhood(Target):
     def __init__(self, fold, mutatedGene, mutatedSamples, dataSamples, trainSamples, dParam,
-                 tParam, iParam, method, dataMap, gPathway, avgAUC, directory):
+                 tParam, iParam, method, dataMap, gPathway, directory):
         Target.__init__(self, time=10000)
         self.fold = fold
         self.mutatedGene = mutatedGene
@@ -455,7 +457,6 @@ class prepareNeighborhood(Target):
         self.method = method
         self.dataMap = dataMap
         self.gPathway = gPathway
-        self.avgAUC = avgAUC
         self.directory = directory
     def run(self):
         if self.fold == 0:
@@ -491,26 +492,21 @@ class prepareNeighborhood(Target):
         else:
             if runGreedy:
                 while (True):
-                    ## run PARADIGM-SHIFT
-                    genAnalysis = runPARADIGM(self.fold, self.mutatedGene, self.mutatedSamples, 
-                                              self.dataSamples, self.trainSamples, uPathway, 
-                                              dPathway, self.avgAUC, shiftDir)
-                    genAnalysis.run()
-                    ## score training performance
-                    
-                    ## accept or reject
-                    
-                    ## add or subtract node
-                    
+                    self.addChildTarget(runGreedy(self.fold, self.mutatedGene, self.mutatedSamples, 
+                                                  self.dataSamples, self.trainSamples, uPathway, 
+                                                  dPathway, shiftDir))
             else:
-                ## run PARADIGM-SHIFT
+                if self.fold == 0:
+                    dataPath = "../"
+                else:
+                    dataPath = "../../"
                 self.addChildTarget(runPARADIGM(self.fold, self.mutatedGene, self.mutatedSamples, 
                                                 self.dataSamples, self.trainSamples, uPathway, 
-                                                dPathway, self.avgAUC, shiftDir))
+                                                dPathway, dataPath, shiftDir))
 
-class runPARADIGM(Target):
+class runGreedy(Target):
     def __init__(self, fold, mutatedGene, mutatedSamples, dataSamples, trainSamples, uPathway, 
-                 dPathway, avgAUC, directory):
+                 dPathway, directory):
         Target.__init__(self, time=10000)
         self.fold = fold
         self.mutatedGene = mutatedGene
@@ -519,28 +515,34 @@ class runPARADIGM(Target):
         self.trainSamples = trainSamples
         self.uPathway = uPathway
         self.dPathway = dPathway
-        self.avgAUC = avgAUC
         self.directory = directory
     def run(self):
         os.chdir(self.directory)
-        if self.fold == 0:
-            dataPath = "../"
-        else:
-            dataPath = "../../"
         
-        ## run paradigm (observed and nulls)
-        self.addChildTarget(jtCmd("%s -p upstream_pathway.tab -c config.txt -b %s -o %s" % (paradigmExec, "%s/up_" % (dataPath), "%s_upstream.fa" % (self.mutatedGene)), self.directory))
-        self.addChildTarget(jtCmd("%s -p downstream_pathway.tab -c config.txt -b %s -o %s" % (paradigmExec, "%s/down_" % (dataPath), "%s_downstream.fa" % (self.mutatedGene)), self.directory))
-        for null in range(1, nNulls+1):
-            self.addChildTarget(jtCmd("%s -p upstream_pathway.tab -c config.txt -b %s -o %s" % (paradigmExec, "%s/up_N%s_" % (dataPath, null), "N%s_%s_upstream.fa" % (null, self.mutatedGene)), self.directory))
-            self.addChildTarget(jtCmd("%s -p downstream_pathway.tab -c config.txt -b %s -o %s" % (paradigmExec, "%s/down_N%s_" % (dataPath, null), "N%s_%s_downstream.fa" % (null, self.mutatedGene)), self.directory))
-        self.setFollowOnTarget(evaluateCV(self.fold, self.mutatedGene, self.mutatedSamples, 
-                                          self.dataSamples, self.trainSamples, self.uPathway, 
-                                          self.dPathway, self.avgAUC, self.directory))
-
-class evaluateCV(Target):
+        ## get baseline PARADIGM-SHIFT auc
+        system("mkdir iter_0")
+        system("cp config.txt iter_0/config.txt")
+        system("cp params.txt iter_0/params.txt")
+        for file in os.listdir("."):
+            if file.endswith(".imap"):
+                system("cp %s iter_0/%s" % (file, file))
+            elif file.endswith(".dogma"):
+                system("cp %s iter_0/%s" % (file, file))
+        os.chdir("..")
+        if self.fold == 0:
+            dataPath = "../../"
+        else:
+            dataPath = "../../../"
+        self.addChildTarget(runPARADIGM(self.fold, self.mutatedGene, self.mutatedSamples, 
+                                        self.dataSamples, self.trainSamples, self.uPathway, 
+                                        self.dPathway, dataPath, "%s/iter_0" % (self.directory)))
+        self.setFollowOnTarget(greedyBranchSearch(self.fold, self.mutatedGene, self.mutatedSamples, 
+                                        self.dataSamples, self.trainSamples, self.uPathway, 
+                                        self.dPathway, self.directory))
+        
+class greedyBranchSearch(Target):
     def __init__(self, fold, mutatedGene, mutatedSamples, dataSamples, trainSamples, uPathway, 
-                 dPathway, avgAUC, directory):
+                 dPathway, directory):
         Target.__init__(self, time=10000)
         self.fold = fold
         self.mutatedGene = mutatedGene
@@ -549,13 +551,83 @@ class evaluateCV(Target):
         self.trainSamples = trainSamples
         self.uPathway = uPathway
         self.dPathway = dPathway
-        self.avgAUC = avgAUC
+        self.directory = directory
+    def run(self):
+        os.chdir(self.directory)
+        
+        ## spin off new iter and compute additions
+        
+        ## consider all node additions
+            ## addChildTargets
+        ## setFollowOn            
+            
+class greedySelectOptimum(Target):
+    def __init__(self, fold, mutatedGene, mutatedSamples, dataSamples, trainSamples, uPathway, 
+                 dPathway, directory):
+        Target.__init__(self, time=10000)
+        self.fold = fold
+        self.mutatedGene = mutatedGene
+        self.mutatedSamples = mutatedSamples
+        self.dataSamples = dataSamples
+        self.trainSamples = trainSamples
+        self.uPathway = uPathway
+        self.dPathway = dPathway
+        self.directory = directory
+    def run(self):
+        os.chdir(self.directory)
+        
+        ## pick best positive, if none break
+        if max(auc_tr_diff) > 0.0:
+            ## store new best
+            
+            ## set new pathway as base
+            
+            ## addFollow
+            pass
+        
+class runPARADIGM(Target):
+    def __init__(self, fold, mutatedGene, mutatedSamples, dataSamples, trainSamples, uPathway, 
+                 dPathway, dataPath, directory):
+        Target.__init__(self, time=10000)
+        self.fold = fold
+        self.mutatedGene = mutatedGene
+        self.mutatedSamples = mutatedSamples
+        self.dataSamples = dataSamples
+        self.trainSamples = trainSamples
+        self.uPathway = uPathway
+        self.dPathway = dPathway
+        self.dataPath = dataPath
+        self.directory = directory
+    def run(self):
+        os.chdir(self.directory)
+        
+        ## run paradigm (observed and nulls)
+        self.addChildTarget(jtCmd("%s -p upstream_pathway.tab -c config.txt -b %s -o %s" % (paradigmExec, "%s/up_" % (self.dataPath), "%s_upstream.fa" % (self.mutatedGene)), self.directory))
+        self.addChildTarget(jtCmd("%s -p downstream_pathway.tab -c config.txt -b %s -o %s" % (paradigmExec, "%s/down_" % (self.dataPath), "%s_downstream.fa" % (self.mutatedGene)), self.directory))
+        for null in range(1, nNulls+1):
+            self.addChildTarget(jtCmd("%s -p upstream_pathway.tab -c config.txt -b %s -o %s" % (paradigmExec, "%s/up_N%s_" % (self.dataPath, null), "N%s_%s_upstream.fa" % (null, self.mutatedGene)), self.directory))
+            self.addChildTarget(jtCmd("%s -p downstream_pathway.tab -c config.txt -b %s -o %s" % (paradigmExec, "%s/down_N%s_" % (self.dataPath, null), "N%s_%s_downstream.fa" % (null, self.mutatedGene)), self.directory))
+        self.setFollowOnTarget(evaluateCV(self.fold, self.mutatedGene, self.mutatedSamples, 
+                                          self.dataSamples, self.trainSamples, self.uPathway, 
+                                          self.dPathway, self.directory))
+
+class evaluateCV(Target):
+    def __init__(self, fold, mutatedGene, mutatedSamples, dataSamples, trainSamples, uPathway, 
+                 dPathway, directory):
+        Target.__init__(self, time=10000)
+        self.fold = fold
+        self.mutatedGene = mutatedGene
+        self.mutatedSamples = mutatedSamples
+        self.dataSamples = dataSamples
+        self.trainSamples = trainSamples
+        self.uPathway = uPathway
+        self.dPathway = dPathway
         self.directory = directory
     def run(self):
         os.chdir(self.directory)
         
         shiftCV(self.mutatedGene, self.mutatedSamples, self.dataSamples, self.trainSamples, 
-                self.uPathway, self.dPathway, nNulls = nNulls, avgAUC = self.avgAUC)
+                self.uPathway, self.dPathway, nNulls = nNulls)
 
 class evaluateParams(Target):
     def __init__(self, fold, mutatedGene, mutatedSamples, dataSamples, trainSamples, dataFeatures, 
@@ -628,6 +700,10 @@ class mutationSHIFT(Target):
     def run(self):
         shiftDir = "%s/analysis/%s" % (self.directory, self.mutatedGene)
         os.chdir(shiftDir)
+        
+        ## copy tables
+        system("cp param_%s/sig.tab sig.tab" % ("_".join(self.topAUC_params)))
+        system("cp param_%s/pshift.train.tab pshift.tab" % ("_".join(self.topAUC_params)))
         
         ## output msep and background plots
         system("%s/msep.R %s param_%s/mut.train.scores param_%s/non.train.scores" % (self.directory, 

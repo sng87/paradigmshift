@@ -737,7 +737,7 @@ def selectMutationNeighborhood(focusGene, mutSamples, dataFile, gPathway, trainS
     return(upPathway, downPathway, hasUpstream and hasDownstream)
 
 def shiftCV(mutatedGene, mutatedSamples, dataSamples, trainSamples, uPathway, dPathway, 
-            nNulls = 10, msepMethod = "tt", alpha = 0.05, avgAUC = None, mutsigFile = None):
+            nNulls = 10, msepMethod = "tt", alpha = 0.05, mutsigFile = None):
     ## read paradigm output
     upScore = mData.rPARADIGM("%s_upstream.fa" % (mutatedGene), useRows = uPathway.nodes.keys())[1]
     downScore = mData.rPARADIGM("%s_downstream.fa" % (mutatedGene), useRows = dPathway.nodes.keys())[1]
@@ -814,30 +814,42 @@ def shiftCV(mutatedGene, mutatedSamples, dataSamples, trainSamples, uPathway, dP
     labelMap = {}
     nonScore_tr = {}
     nonScore_te = {}
+    o = open("pshift.train.tab", "w")
+    o.write("> %s\tP-Shifts:Table\n" % (mutatedGene))
+    o.write("# sample\tclass\tP-Shift\n")
     f = open("mut.train.scores", "w")
     for sample in mutGroup_tr:
         labelMap[sample] = 1
         nonScore_tr[sample] = (shiftScore[sample]-nonMean)
+        o.write("%s\t+\t%s\n" % (sample, nonScore_tr[sample]))
         f.write("%s\t%s\n" % (sample, nonScore_tr[sample]))
     f.close()
     f = open("non.train.scores", "w")
     for sample in nonGroup_tr:
         labelMap[sample] = 0
         nonScore_tr[sample] = (shiftScore[sample]-nonMean)
+        o.write("%s\t-\t%s\n" % (sample, nonScore_tr[sample]))
         f.write("%s\t%s\n" % (sample, nonScore_tr[sample]))
     f.close()
+    o.close()
+    o = open("pshift.test.tab", "w")
+    o.write("> %s\tP-Shifts:Table\n" % (mutatedGene))
+    o.write("# sample\tclass\tP-Shift\n")
     f = open("mut.test.scores", "w")
     for sample in mutGroup_te:
         labelMap[sample] = 1
         nonScore_te[sample] = (shiftScore[sample]-nonMean)
+        o.write("%s\t+\t%s\n" % (sample, nonScore_te[sample]))
         f.write("%s\t%s\n" % (sample, nonScore_te[sample]))
     f.close()
     f = open("non.test.scores", "w")
     for sample in nonGroup_te:
         labelMap[sample] = 0
         nonScore_te[sample] = (shiftScore[sample]-nonMean)
+        o.write("%s\t-\t%s\n" % (sample, nonScore_te[sample]))
         f.write("%s\t%s\n" % (sample, nonScore_te[sample]))
     f.close()
+    o.close()
     
     ## compute auc from stats
     sorted_tr = nonScore_tr.keys()
@@ -877,18 +889,19 @@ def shiftCV(mutatedGene, mutatedSamples, dataSamples, trainSamples, uPathway, dP
     significanceScore = (realScores[0]-nullMean)/(nullStd+alpha)
     
     ## output sig.stats
-    if avgAUC is not None:
-        mutsigData = {}
-        if mutsigFile is not None:
-            mutsigData = mData.rCRSData(mutsigFile)["p"]
-        if mutatedGene in mutsigData:
-            mutVal = mutsigData[mutatedGene]
-        else:
-            mutVal = "NA"
-        f = open("sig.stats", "w")
-        f.write("%s\t%s\t%s\t%s\t%s\t%s\n" % (mutatedGene, len(nonGroup_tr), len(mutGroup_tr), 
-                                              avgAUC, significanceScore, str(mutVal).lstrip("<")))
-        f.close()
+    mutsigData = {}
+    if mutsigFile is not None:
+        mutsigData = mData.rCRSData(mutsigFile)["p"]
+    if mutatedGene in mutsigData:
+        mutVal = mutsigData[mutatedGene]
+    else:
+        mutVal = "NA"
+    f = open("sig.tab", "w")
+    f.write("# gene\tnon_mut\tmut\tmsep\tsignificance\tmutSig\n")
+    f.write("%s\t%s\t%s\t%s\t%s\n" % (mutatedGene, len(nonGroup_tr), len(mutGroup_tr), 
+                                      msepScore["real"], significanceScore, 
+                                      str(mutVal).lstrip("<")))
+    f.close()
     
 def computeAUC(features, labelMap, scoreMap):
     points = []
