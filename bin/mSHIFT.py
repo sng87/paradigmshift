@@ -3,8 +3,6 @@ from copy import deepcopy
 import liblinear
 import liblinearutil
 
-import mData, mCalculate
-
 def log(msg, die = False):
     """logger function"""
     sys.stderr.write(msg)
@@ -429,6 +427,225 @@ def removeNode(node, pNodes, pInteractions):
                 del rpInteractions[node]
     return(pNodes, pInteractions)
 
+def retColumns(inf, delim = "\t"):
+    """returns the columns of a .tsv"""
+    f = openAnyFile(inf)
+    line = f.readline()
+    if line.isspace():
+        log("ERROR: encountered a blank header\n", die = True)
+    line = line.rstrip("\r\n")
+    return(re.split(delim, line)[1:])
+
+def retRows(inf, delim = "\t", index = 0, header = True):
+    """returns the rows of a .tsv"""
+    rows = []
+    f = openAnyFile(inf)
+    if header:
+        line = f.readline()
+        if line.isspace():
+            log("ERROR: encountered a blank header\n", die = True)
+    for line in f:
+        if line.isspace():
+            continue
+        line = line.rstrip("\r\n")
+        rows.append(re.split(delim, line)[index])
+    return(rows)
+
+def rCRSData(inf, appendData = {}, delim = "\t", null = "NA", useCols = None, useRows = None, retFeatures = False, debug = False):
+    """reads .tsv into a [col][row] dictionary"""
+    inData = {}  
+    colFeatures = []
+    rowFeatures = []
+    ## copy appendData
+    for col in appendData.keys():
+        if useCols != None:
+            if col not in useCols:
+                continue
+        inData[col] = {}
+        for row in appendData[col].keys():
+            if useRows != None:
+                if row not in useRows:
+                    continue
+            inData[col][row] = [appendData[col][row]]
+    ## read header
+    f = openAnyFile(inf)
+    line = f.readline()
+    if line.isspace():
+        log("ERROR: encountered a blank on line 1\n", die = True)
+    line = line.rstrip("\r\n")
+    pline = re.split(delim, line)
+    lineLength = len(pline)
+    if debug:
+        log("%s\nLENGTH: %s\n" % (line, lineLength))
+    colIndex = {}
+    for i, col in enumerate(pline[1:]):
+        if useCols != None:
+            if col not in useCols:
+                continue
+        colIndex[col] = i
+        colFeatures.append(col)
+        if col not in inData:
+            inData[col] = {}
+    ## read data
+    for line in f:
+        if line.isspace():
+            continue
+        line = line.rstrip("\r\n")
+        pline = re.split(delim, line)
+        row = pline[0]
+        if useRows != None:
+            if row not in useRows:
+                continue
+        rowFeatures.append(row)
+        if debug:
+            log("%s\nLENGTH: %s\n" % (line, len(pline)))
+        if len(pline) != lineLength:
+            log("ERROR: length of line does not match the rest of the file\n", die = True)
+        for col in colFeatures:
+            if row not in inData[col]:
+                inData[col][row] = []
+            if pline[colIndex[col]+1] == "":
+                inData[col][row].append(null)
+            else:            
+                inData[col][row].append(pline[colIndex[col]+1])
+    f.close()
+    ## average entries
+    for col in inData.keys():
+        for row in inData[col].keys():
+            inData[col][row] = mean(inData[col][row], null = inData[col][row][0])
+    if retFeatures:
+        return(inData, colFeatures, rowFeatures)
+    else:
+        return(inData)
+
+def wCRSData(outf, outData, delim = "\t", null = "NA", useCols = None, useRows = None):
+    """write [col][row] dictionary to .tsv"""
+    ## get colFeatures and rowFeatures
+    if useCols == None:
+        colFeatures = outData.keys()
+    else:
+        colFeatures = list(useCols)
+    if useRows == None:
+        rowFeatures = []
+        for col in colFeatures:
+            if col in outData:
+                rowFeatures = outData[col].keys()
+                break
+    else:
+        rowFeatures = list(useRows)
+    ## write header
+    if os.path.exists(outf):
+        f = open(outf, "a")
+    else:
+        f = open(outf, "w")
+        f.write("id%s\n" % (delim+delim.join(colFeatures)))
+    ## write data
+    for row in rowFeatures:
+        f.write("%s" % (row))
+        for col in colFeatures:
+            try:
+                f.write("%s" % (delim+str(outData[col][row])))
+            except KeyError:
+                f.write("%s" % (delim+null))
+        f.write("\n")
+    f.close()
+
+def rwCRSData(outf, inf, delim = "\t", null = "NA", useCols = None, useRows = None, colMap = {}, rowMap = {}, rcMap = None):
+    """reads and writes .tsv"""
+    colFeatures = []
+    ## read header
+    f = openAnyFile(inf)
+    line = f.readline()
+    if line.isspace():
+        log("ERROR: encountered a blank on line 1\n", die = True)
+    line = line.rstrip("\r\n")
+    pline = re.split(delim, line)
+    lineLength = len(pline)
+    colIndex = {}
+    for i, col in enumerate(pline[1:]):
+        colIndex[col] = i
+        if useCols != None:
+            if col not in useCols:
+                continue
+        colFeatures.append(col)
+    ## write header
+    if os.path.exists(outf):
+        o = open(outf, "a")
+    else:
+        o = open(outf, "w")
+        o.write("id%s\n" % (delim+delim.join(colFeatures)))
+    ## read and write data
+    rowCount = 0
+    for line in f:
+        if line.isspace():
+            continue
+        rowCount += 1
+        line = line.rstrip("\r\n")
+        pline = re.split(delim, line)
+        if pline[0] in rowMap:
+            mrow = rowMap[pline[0]]
+        else:
+            mrow = pline[0]
+        if useRows != None:
+            if mrow not in useRows:
+                continue
+        if len(pline) != lineLength:
+            log("ERROR: length of line does not match the rest of the file\n", die = True)
+        else:
+            o.write("%s" % (mrow))
+        if rcMap is not None:
+            colMap = rcMap[mrow]
+        for col in colFeatures:
+            if col in colMap:
+                mcol = colMap[col]
+            else:
+                mcol = col
+            if pline[colIndex[mcol]+1] == "":
+                o.write("%s" % (delim+null))
+            else:            
+                o.write("%s" % (delim+pline[colIndex[mcol]+1]))
+        o.write("\n")
+    f.close()
+    o.close()
+
+def rList(inf, header = False):
+    """read 1 column list"""
+    inList = []
+    f = openAnyFile(inf)
+    if header:
+        f.readline()
+    for line in f:
+        if line.isspace():
+            continue
+        line = line.rstrip("\t\r\n")
+        inList.append(line)
+    f.close()
+    return(inList)
+
+def rPARADIGM(inf, delim = "\t", useRows = None):
+    """read PARADIGM format .fa output"""
+    inLikelihood = {}
+    inScore = {}
+    f = openAnyFile(inf)
+    for line in f:
+        if line.isspace():
+            continue
+        line = line.rstrip("\r\n")
+        if line.startswith(">"):
+            pline = re.split("[= ]", line)
+            sample = pline[1]
+            inLikelihood[sample] = float(pline[3])
+            inScore[sample] = {}
+        else:
+            pline = re.split(delim, line)
+            feature = pline[0]
+            if useRows != None:
+                if feature not in useRows:
+                    continue
+            inScore[sample][feature] = float(pline[1])
+    f.close()
+    return(inLikelihood, inScore)
+
 def floatList(inList):
     """returns only numeric elements of a list"""
     outList = []
@@ -451,9 +668,29 @@ def mean(inList, null = "NA"):
         mean = sum(fList)/len(fList)
     return (mean)
 
+def mean_std(inList, sample = True):
+    """Calculates mean and std"""
+    fList = floatList(inList)
+    if len(fList) == 0:
+        mean = "NA"
+        std = "NA"
+    else:
+        mean = sum(fList)/float(len(fList))
+        std = 0.0
+        for i in fList:
+            std += (i-mean)**2
+        if len(fList) > 1:
+            if sample:
+                std = math.sqrt(std/(len(fList)-1))
+            else:
+                std = math.sqrt(std/len(fList))
+        else:
+            std = 0.0
+    return(mean, std)
+
 def ttest(values0, values1, alpha = 0.05):
-    (mean0, std0) = mCalculate.mean_std(values0)
-    (mean1, std1) = mCalculate.mean_std(values1)
+    (mean0, std0) = mean_std(values0)
+    (mean1, std1) = mean_std(values1)
     try:
         tval = (mean1-mean0)/(math.sqrt((std1**2)/len(values1)+(std0**2)/len(values0))+alpha)
     except ZeroDivisionError:
@@ -463,8 +700,8 @@ def ttest(values0, values1, alpha = 0.05):
     return(tval)
 
 def kstest(values0, values1):
-    (mean0, std0) = mCalculate.mean_std(values0)
-    (mean1, std1) = mCalculate.mean_std(values1)
+    (mean0, std0) = mean_std(values0)
+    (mean1, std1) = mean_std(values1)
     values0.sort()
     values1.sort()
     ksval = 0.0
@@ -552,7 +789,7 @@ def scoreSVM(matData, posSamples, negSamples):
     prob = liblinear.problem(svmLabels, svmData)
     param = liblinear.parameter('-s 3 -c 5 -q')
     liblinearutil.save_model('model_file', liblinearutil.train(prob, param))
-    weights = mData.rList("model_file")[6:]
+    weights = rList("model_file")[6:]
     scoreMap = {}
     for feature in featureMap.keys():
         scoreMap[featureMap[feature]] = float(weights[feature-1])
@@ -567,13 +804,13 @@ def scoreTT(matData, posSamples, negSamples):
 def scoreVariance(matData, matSamples):
     scoreMap = {}
     for feature in matData.keys():
-        scoreMap[feature] = mData.mean_std([matData[feature][i] for i in matSamples], sample = True)[1]
+        scoreMap[feature] = mean_std([matData[feature][i] for i in matSamples], sample = True)[1]
     return(scoreMap)
 
 def selectMutationNeighborhood(focusGene, mutSamples, dataFile, gPathway, trainSamples = None, tCutoff = 2.0, tIncrement = 0.5 , maxDistance = 2, method = "vsZero", penalty = 0.5):
     """performs simple univariate approach for selecting features with a threshold"""
     ## load data
-    (matData, matFeatures, matSamples) = mData.rCRSData(dataFile, retFeatures = True)
+    (matData, matFeatures, matSamples) = rCRSData(dataFile, retFeatures = True)
     if trainSamples is not None and method != "variance":
         matSamples = list(set(matSamples) & set(trainSamples))
     mutatedSamples = list(set(mutSamples) & set(matSamples))
@@ -767,15 +1004,15 @@ def selectMutationNeighborhood(focusGene, mutSamples, dataFile, gPathway, trainS
 def shiftCV(mutatedGene, mutatedSamples, dataSamples, trainSamples, uPathway, dPathway, 
             nNulls = 10, msepMethod = "tt", alpha = 0.05, mutsigFile = None):
     ## read paradigm output
-    upScore = mData.rPARADIGM("%s_upstream.fa" % (mutatedGene), useRows = uPathway.nodes.keys())[1]
-    downScore = mData.rPARADIGM("%s_downstream.fa" % (mutatedGene), useRows = dPathway.nodes.keys())[1]
-    mData.wCRSData("paradigm_up.tab", upScore)
-    mData.wCRSData("paradigm_down.tab", downScore)
+    upScore = rPARADIGM("%s_upstream.fa" % (mutatedGene), useRows = uPathway.nodes.keys())[1]
+    downScore = rPARADIGM("%s_downstream.fa" % (mutatedGene), useRows = dPathway.nodes.keys())[1]
+    wCRSData("paradigm_up.tab", upScore)
+    wCRSData("paradigm_down.tab", downScore)
     n_upScore = {}
     n_downScore = {}
     for null in range(1, nNulls+1):
-        n_upScore[null] = mData.rPARADIGM("N%s_%s_upstream.fa" % (null, mutatedGene), useRows = [mutatedGene])[1]
-        n_downScore[null] = mData.rPARADIGM("N%s_%s_downstream.fa" % (null, mutatedGene), useRows = [mutatedGene])[1]
+        n_upScore[null] = rPARADIGM("N%s_%s_upstream.fa" % (null, mutatedGene), useRows = [mutatedGene])[1]
+        n_downScore[null] = rPARADIGM("N%s_%s_downstream.fa" % (null, mutatedGene), useRows = [mutatedGene])[1]
     f = open("up.features", "w")
     for feature in (set(upScore[upScore.keys()[0]].keys()) - set([mutatedGene])):
         f.write("%s\n" % (feature))
@@ -837,8 +1074,8 @@ def shiftCV(mutatedGene, mutatedSamples, dataSamples, trainSamples, uPathway, dP
     f.close()
     
     ## compute CV statistics
-    (nonMean, nonStd) = mCalculate.mean_std([shiftScore[sample] for sample in nonGroup_tr])
-    (permMean, permStd) = mCalculate.mean_std([shiftScore[sample] for sample in permGroup_tr])
+    (nonMean, nonStd) = mean_std([shiftScore[sample] for sample in nonGroup_tr])
+    (permMean, permStd) = mean_std([shiftScore[sample] for sample in permGroup_tr])
     labelMap = {}
     nonScore_tr = {}
     nonScore_te = {}
@@ -913,13 +1150,13 @@ def shiftCV(mutatedGene, mutatedSamples, dataSamples, trainSamples, uPathway, dP
     ## compute background significance
     realScores = [msepScore["real"]]
     nullScores = [msepScore[null] for null in list(set(msepScore.keys()) - set(["real"]))]
-    (nullMean, nullStd) = mCalculate.mean_std(nullScores)
+    (nullMean, nullStd) = mean_std(nullScores)
     significanceScore = (realScores[0]-nullMean)/(nullStd+alpha)
     
     ## output sig.stats
     mutsigData = {}
     if mutsigFile is not None:
-        mutsigData = mData.rCRSData(mutsigFile)["p"]
+        mutsigData = rCRSData(mutsigFile)["p"]
     if mutatedGene in mutsigData:
         mutVal = mutsigData[mutatedGene]
     else:
