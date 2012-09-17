@@ -4,9 +4,6 @@
 
 Usage:
   paradigmSHIFTv2.py [options]
-
-Optional Configuration Files:
-  
 """
 ## Written By: Sam Ng
 import math, os, sys, random, re
@@ -67,20 +64,18 @@ if os.path.exists("mut.cfg"):
         elif line.startswith("cohortName"):
             paramMap["cohortName"] = pline[1]
     f.close()
+if "cohortName" not in paramMap:
+    paramMap["cohortName"] = re.split("/", os.getcwd())[-1]
 
 ## default variables
-if "cohortName" not in paramMap:
-    cohortName = re.split("/", os.getcwd())[-1]
-else:
-    cohortName = paramMap["cohortName"]
-runGreedy = False
-useFlattened = True
-mutationThreshold = 5
+useGreedy = False
+useFlattened = True                             ## Flattens complexes to prevent long complex chains
+mutationThreshold = 5                           ## Minimum mutations in cohort needed to consider a gene
 maxDistanceParam = max(paramMap["dist"]) + 1
 
-nNulls = 10
 rRepeats = 1
 mFolds = 5
+nNulls = 10
 
 def writeScripts():
     """creates the R scripts necessary for plotting"""
@@ -105,7 +100,7 @@ def writeScripts():
     
     yMax = 1.1*max(density(mutData$V2)$y, density(wtData$V2)$y)
     
-    pdf(paste(mutGene, ".signal.pdf", sep = ""), height = 5, width = 5)
+    pdf(paste(mutGene, ".msep.pdf", sep = ""), height = 5, width = 5)
     plot(density(mutData$V2), col = "red", xlim = c(xMin, xMax), ylim = c(0, yMax), main = mutGene, xlab = "")
     par(new = T)
     plot(density(wtData$V2), xlim = c(xMin, xMax), ylim = c(0, yMax), main = "", xlab = "", ylab = "")
@@ -138,29 +133,13 @@ def writeScripts():
     dev.off()
     """
     
-    aucR = """#!/usr/bin/env Rscript
-    args = commandArgs(TRUE)
-    mutGene = args[1]
-    aucFile = args[2]
-    
-    aucData = read.delim(aucFile, skip = 1, header = FALSE)
-    
-    pdf(paste(mutGene, ".auc.pdf", sep = ""), height = 5, width = 5)
-    plot(aucData$V1, aucData$V2, pch = "", xlab = "", ylab = "")
-    lines(aucData$V1, aucData$V2)
-    dev.off()
-    """
-    
     f = open("msep.R", "w")
     f.write(msepR)
     f.close
     f = open("background.R", "w")
     f.write(backgroundR)
     f.close
-    f = open("auc.R", "w")
-    f.write(aucR)
-    f.close
-    system("chmod 755 msep.R background.R auc.R")
+    system("chmod 755 msep.R background.R")
 
 class jtData(Target):
     def __init__(self, mutatedGene, dataSamples, proteinFeatures, dataFeatures, dataMap, directory):
@@ -292,14 +271,18 @@ class branchGenes(Target):
         os.chdir(self.directory)
         
         ## branch genes
+        includeFeatures = []
         if not os.path.exists("analysis"):
             system("mkdir analysis")
         for mutatedGene in self.mutationMap.keys():
             if not os.path.exists("analysis/%s" % (mutatedGene)):
                 system("mkdir analysis/%s" % (mutatedGene))
-            self.addChildTarget(branchFolds(mutatedGene, self.mutationMap[mutatedGene], 
+                includeFeatures.append(mutatedGene)
+                self.addChildTarget(branchFolds(mutatedGene, self.mutationMap[mutatedGene], 
                                             self.dataSamples, self.dataFeatures, self.dataMap, 
                                             self.gPathway, self.paradigmDir, self.directory))
+        if os.path.exists(htmlDir):
+            self.setFollowOnTarget(pshiftReport(includeFeatures, "%s/%s" % (htmlDir, paramMap["cohortName"]), self.directory))
 
 class branchFolds(Target):
     def __init__(self, mutatedGene, mutatedSamples, dataSamples, dataFeatures, dataMap, gPathway, 
@@ -337,7 +320,7 @@ class branchFolds(Target):
             genData.run()
         
         ## pick samples
-        system("echo Branching Folds ... >> progress.log")
+        system("echo Branching Folds and Params... >> progress.log")
         mutSamples = self.mutatedSamples
         nonSamples = list(set(self.dataSamples) - set(self.mutatedSamples))
         foldSamples = {}
@@ -408,8 +391,8 @@ class branchParams(Target):
                     (auc_tr, auc_te, mparams) = re.split("\t", line.rstrip("\r\n"))
                     aucList.append(auc_te)
                     aucLines.append("%s\t%s\t%s\t%s\n" % (fold, auc_tr, auc_te, mparams))
-            o = open("avg.tab", "w")
-            o.write("> %s\tavgAUC:%s\n" % (self.mutatedSamples, mean(aucList)))
+            o = open("avgAUC.tab", "w")
+            o.write("> %s\tavgAUC:%s\n" % (self.mutatedGene, mean(aucList)))
             o.write("# fold\ttrain\ttest\tparams\n")
             for line in aucLines:
                 o.write(line)
@@ -475,6 +458,7 @@ class prepareNeighborhood(Target):
             dataFile = "../../up_%s" % (re.split("/", self.dataMap["exp"])[-1])
         
         ## get upstream and downstream
+        system("echo Selecting Mutational Network ... >> progress.log")
         (uPathway, dPathway, isPass) = selectMutationNeighborhood(self.mutatedGene, 
                                                                   self.mutatedSamples, dataFile, 
                                                                   self.gPathway, 
@@ -486,21 +470,21 @@ class prepareNeighborhood(Target):
         
         ## check thresholds
         if not isPass:
+            system("echo Stop ... >> progress.log")
             f = open("auc.stat", "w")
             f.write("NA\tNA\n")
             f.close()
         else:
-            if runGreedy:
-                while (True):
-                    self.addChildTarget(runGreedy(self.fold, self.mutatedGene, self.mutatedSamples, 
-                                                  self.dataSamples, self.trainSamples, uPathway, 
-                                                  dPathway, shiftDir))
+            if useGreedy:
+                self.setFollowOnTarget(runGreedy(self.fold, self.mutatedGene, self.mutatedSamples, 
+                                                 self.dataSamples, self.trainSamples, uPathway, 
+                                                 dPathway, shiftDir))
             else:
                 if self.fold == 0:
                     dataPath = "../"
                 else:
                     dataPath = "../../"
-                self.addChildTarget(runPARADIGM(self.fold, self.mutatedGene, self.mutatedSamples, 
+                self.setFollowOnTarget(runPARADIGM(self.fold, self.mutatedGene, self.mutatedSamples, 
                                                 self.dataSamples, self.trainSamples, uPathway, 
                                                 dPathway, dataPath, shiftDir))
 
@@ -602,6 +586,7 @@ class runPARADIGM(Target):
         os.chdir(self.directory)
         
         ## run paradigm (observed and nulls)
+        system("echo Running PARADIGM inference ... >> progress.log")
         self.addChildTarget(jtCmd("%s -p upstream_pathway.tab -c config.txt -b %s -o %s" % (paradigmExec, "%s/up_" % (self.dataPath), "%s_upstream.fa" % (self.mutatedGene)), self.directory))
         self.addChildTarget(jtCmd("%s -p downstream_pathway.tab -c config.txt -b %s -o %s" % (paradigmExec, "%s/down_" % (self.dataPath), "%s_downstream.fa" % (self.mutatedGene)), self.directory))
         for null in range(1, nNulls+1):
@@ -646,6 +631,7 @@ class evaluateParams(Target):
         if self.fold == 0:
             shiftDir = "%s/analysis/%s" % (self.directory, self.mutatedGene)
             os.chdir(shiftDir)
+            system("echo Identifying Best Param by Training Validation ... >> progress.log")
         else:
             shiftDir = "%s/analysis/%s/fold%s" % (self.directory, self.mutatedGene, self.fold)
             os.chdir(shiftDir)
@@ -702,6 +688,7 @@ class mutationSHIFT(Target):
         os.chdir(shiftDir)
         
         ## copy tables
+        system("echo Output Reports ... >> progress.log")
         system("cp param_%s/sig.tab sig.tab" % ("_".join(self.topAUC_params)))
         system("cp param_%s/pshift.train.tab pshift.tab" % ("_".join(self.topAUC_params)))
         
@@ -714,15 +701,14 @@ class mutationSHIFT(Target):
                                                  "_".join(self.topAUC_params)))
         
         ## prepare web report
-        system("mkdir pshift_%s" % (self.mutatedGene))
-        system("mkdir pshift_%s/img" % (self.mutatedGene))
+        system("mkdir img")
         
         ## draw circles
         system("cat up_%s | transpose.pl > param_%s/exp.tab" % (re.split("/", self.dataMap["exp"])[-1], "_".join(self.topAUC_params)))
         os.chdir("param_%s" % ("_".join(self.topAUC_params)))
-        system("%s -o \"%s;mut.circle,shift.circle\" -s include.samples -f mut.features ../pshift_%s/img/ mut.circle exp.tab paradigm_up.tab paradigm_down.tab shift.circle" % (circleExec, self.mutatedGene, self.mutatedGene))
-        system("%s -o \"%s;mut.circle,shift.circle\" -s include.samples -f up.features ../pshift_%s/img/ mut.circle exp.tab paradigm_up.tab" % (circleExec, self.mutatedGene, self.mutatedGene))
-        system("%s -o \"%s;mut.circle,shift.circle\" -s include.samples -f down.features ../pshift_%s/img/ mut.circle exp.tab paradigm_down.tab" % (circleExec, self.mutatedGene, self.mutatedGene))
+        system("%s -o \"%s;mut.circle,shift.circle\" -s include.samples -f mut.features ../img/ mut.circle exp.tab paradigm_up.tab paradigm_down.tab shift.circle" % (circleExec, self.mutatedGene))
+        system("%s -o \"%s;mut.circle,shift.circle\" -s include.samples -f up.features ../img/ mut.circle exp.tab paradigm_up.tab" % (circleExec, self.mutatedGene))
+        system("%s -o \"%s;mut.circle,shift.circle\" -s include.samples -f down.features ../img/ mut.circle exp.tab paradigm_down.tab" % (circleExec, self.mutatedGene))
         os.chdir("..")
         
         ## output sif
@@ -731,8 +717,7 @@ class mutationSHIFT(Target):
         (dNodes, dInteractions) = rPathway("param_%s/downstream_pathway.tab" % 
                                                     ("_".join(self.topAUC_params)))
         cPathway = combinePathways(Pathway(uNodes, uInteractions), Pathway(dNodes, dInteractions))
-        wSIF("pshift_%s/pshift_%s.sif" % (self.mutatedGene, self.mutatedGene), 
-                                          cPathway.interactions)
+        wSIF("pshift_%s.sif" % (self.mutatedGene), cPathway.interactions)
         
         ## node attributes
         scoreMap = {}
@@ -744,13 +729,24 @@ class mutationSHIFT(Target):
                 scoreMap["pshift_%s" % (self.mutatedGene)][node] = 7
         wNodeAttributes(self.gPathway.nodes, scoreMap = scoreMap, directory = "./")
 
+class pshiftReport(Target):
+    def __init__(self, includeFeatures, reportDir, directory):
+        Target.__init__(self, time=10000)
+        self.includeFeatures = includeFeatures
+        self.reportDir = reportDir
+        self.directory = directory
+    def run(self):
+        os.chdir(self.directory)
+        
         ## cytoscape-web
-        #if os.path.exists(htmlDir):
-        #    system("%s pshift_%s %s/pshift-%s" % (cytowebExec, self.mutatedGene, htmlDir, cohortName))
-        #     system("cat mutation.stats | cut -f2- | cap.pl \"id,MutStatus,Score\" | tab2html.py %s/mutpath-%s/table-%s.html" % (htmlDir, cohortName, self.mutatedGene))
-                
-        #    os.chdir(htmlDir)
-        #    system("./update-html.py")
+        for mutatedGene in self.includeFeatures:
+            tableFiles = []
+            tableFiles.append("analysis/%s/sig.tab" % (mutatedGene))
+            tableFiles.append("msepPlot:analysis/%s/%s.msep.pdf" % (mutatedGene, mutatedGene))
+            tableFiles.append("backgroundPlot:analysis/%s/%s.background.pdf" % (mutatedGene, mutatedGene))
+            tableFiles.append("analysis/%s/avgAUC.tab" % (mutatedGene))
+            tableFiles.append("analysis/%s/pshift.tab" % (mutatedGene))
+            system("pathmark-report.py -t %s analysis/%s %s" % (",".join(tableFiles), mutatedGene, self.reportDir))
 
 def main():
     ## check for fresh run

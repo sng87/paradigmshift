@@ -1,22 +1,18 @@
 #!/usr/bin/env python
-"""layout-cytoscapeweb.py: Generate cytoscapeweb sessions from .sif and .NA files
+"""pathmark-report.py: Generate cytoscapeweb sessions from a bundle (.sif and .NA files)
 
 Usage:
-  layout-cytoscapeweb.py [options] feature destDir
+  pathmark-report.py [options] bundleDir reportDir
 
 Options:
-  -n str    note text
-  -s        output score table
-  -q        run quietly
+  -t file[,file,...]         tab files containing statistics to include on the report
+  -q                         run quietly
 """
-## Written By: Sam Ng
-## Last Updated: 5/18/11
+## Written By: 
 import os, os.path, sys, getopt, re
 import mData, mPathway, mCalculate
 
 verbose = True
-netExtension = ".sif"
-noteText = "Jorma"
 
 htmlLink = """<a href="%s">%s</a>"""
 
@@ -39,6 +35,7 @@ htmlHead = """<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.1//EN" "http://www.w3.o
                 //       - it also has directed edges, which will automatically display edge arrows
                 var xml = '\\
                 """
+
 htmlTail = """                ';
                 
                 // visual style we will use
@@ -186,13 +183,53 @@ htmlTail = """                ';
 </html>
 """
 
+htmlTableHead = """<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.1//EN" "http://www.w3.org/TR/xhtml11/DTD/xhtml11.dtd">
+<html>
+
+    <head>
+        <title>CytoscapeWeb - UCSC PARADIGM Subnets</title>
+        <script type="text/javascript" src="../js/jquery-1.6.1.min.js"></script>
+        <script type="text/javascript" src="../js/jquery.tablesorter.js"></script>
+        <script type="text/javascript">
+            $(document).ready(function() 
+                { 
+                    $("#htmlTable").tablesorter(); 
+                }
+            );
+        </script>
+    </head>
+    <body>
+"""
+
+htmlTableHeader = """    <table id="htmlTable" class="tablesorter" border="1">
+        <thead>
+        <tr>
+            <th>%s</th>
+        </tr>
+        </thead>
+        <tbody>
+"""
+
+htmlTableItem = """        <tr>
+            <td>%s</td>
+        </tr>
+"""
+
+htmlTableTail = """        </tbody>
+    </table>
+    </body>
+</html>
+"""
+
 def usage(code = 0):
     print __doc__
     if code != None: sys.exit(code)
 
-def log(msg):
+def log(msg, die = False):
     if (verbose):
         sys.stderr.write(msg)
+    if (die):
+        sys.exit(1)
 
 class rgb:
     def __init__(self,r,g,b):
@@ -248,19 +285,6 @@ def getColor(val, minVal = -8, maxVal = 8):
     
     return(col.tohex())
 
-def getColorbyType(feature, typeData):
-    if typeData[feature] == "Basal":
-        col = rgb(255, 0, 0)
-    elif typeData[feature] == "Classical":
-        col = rgb(0, 0, 255)
-    elif typeData[feature] == "Primitive":
-        col =  rgb(0, 255, 0)
-    elif typeData[feature] == "Secretory":
-        col = rgb(200, 0, 200)
-    else:
-        col = rgb(255, 255, 255)
-    return(col.tohex())
-
 def getSize(val, minVal = -10, maxVal = 10):
     fval = float(val)
     if fval < 0.0:
@@ -278,7 +302,7 @@ def getSize(val, minVal = -10, maxVal = 10):
 def main(args):
     ## parse arguments
     try:
-        opts, args = getopt.getopt(args, "n:sq")
+        opts, args = getopt.getopt(args, "t:q")
     except getopt.GetoptError, err:
         print str(err)
         usage(2)
@@ -287,53 +311,45 @@ def main(args):
         print "incorrect number of arguments"
         usage(1)
     
-    feature = args[0]
-    destDir = args[1]
+    featureDir = args[0].rstrip("/")
+    featureName = featureDir.split("/")[-1]
+    htmlDir = args[1].rstrip("/")
     
-    mutTable = False
-    scoreTable = False
-    customImage = False
-    global verbose, noteText
+    tableFiles = []
+    global verbose
     for o, a in opts:
-        if o == "-n":
-            noteText = a
-        elif o == "-s":
-            scoreTable = True
+        if o == "-t":
+            tableFiles = a.split(",")
         elif o == "-q":
             verbose = False
-    if destDir.endswith("/"):
-        destDir = destDir.rstrip("/")
     
     ## check structure
-    assert os.path.exists("LABEL.NA")
-    assert os.path.exists("TYPE.NA")
-    assert os.path.exists("%s_SCORE.NA" % (feature))
-    assert os.path.exists("%s" % (feature))
-    if feature.startswith("disc-plot"):
-        mutTable = True
-        mutGene = re.sub("disc-plot", "", feature)
-    if os.path.exists("%s/img" % (feature)):
-        customImage = True
-
-    ## identify nets with feature
+    assert os.path.exists("%s" % (featureDir))
+    assert os.path.exists("%s/LABEL.NA" % (featureDir))
+    assert os.path.exists("%s/TYPE.NA" % (featureDir))
+    assert os.path.exists("%s/SCORE.NA" % (featureDir))
+    
+    ## read in pathway
     sifFile = None
-    for i in os.listdir("%s" % (feature+"/")):
-        if i.endswith(netExtension):
-            sifFile = feature+"/"+i
+    for i in os.listdir(featureDir):
+        if i.endswith(".sif"):
+            sifFile = "%s/%s" % (featureDir, i)
             break
-    (allNodes, allInteractions) = mPathway.rSIF(sifFile)
-    idMap = dict()
-    nodeMap = dict()
-    for i, node in enumerate(allNodes.keys()):
+    (nodes, interactions) = mPathway.rSIF(sifFile)
+    
+    ## construct mapping for integer id <-> string id
+    idMap = {}
+    nodeMap = {}
+    for i, node in enumerate(nodes.keys()):
         idMap[node] = i+1
         nodeMap[i+1] = node
-    labelMap = mData.r2Col("LABEL.NA", delim = " = ", header = True)
-    typeMap = mData.r2Col("TYPE.NA", delim = " = ", header = True)
-    scoreMap = mData.r2Col("%s_SCORE.NA" % (feature), delim = " = ", header = True)
+    labelMap = mData.r2Col("%s/LABEL.NA" % (featureDir), delim = " = ", header = True)
+    typeMap = mData.r2Col("%s/TYPE.NA" % (featureDir), delim = " = ", header = True)
+    scoreMap = mData.r2Col("%s/SCORE.NA" % (featureDir), delim = " = ", header = True)
     nodes = nodeMap.keys()
     nodes.sort()
     
-    ## create graphml structure
+    ## construct graphml
     graphmlContent = """<graphml>\\
                     <key id="name" for="node" attr.name="name" attr.type="string"/>\\
                     <key id="label" for="node" attr.name="label" attr.type="string"/>\\
@@ -345,39 +361,47 @@ def main(args):
                     <key id="interaction" for="edge" attr.name="interaction" attr.type="string"/>\\
                     <graph edgedefault="directed">\\
                     """
+    
+    ## add each node to graphml
     nodeVals = []
-    for i in nodes:
-        if nodeMap[i] == "__DISCONNECTED__":
-            nodeName = re.sub("'", "", nodeMap[i])
-            nodeLabel = re.sub("'", "", nodeMap[i])
+    for node in nodes:
+        try:
+            nodeVals.append(abs(float(scoreMap[nodeMap[node]])))
+        except ValueError:
+            pass
+        except KeyError:
+            pass
+    if len(nodeVals) == 0:
+        nodeVals = [-8, 8]
+    for node in nodes:
+        if nodeMap[node] == "__DISCONNECTED__":
+            nodeName = re.sub("'", "", nodeMap[node])
+            nodeLabel = re.sub("'", "", nodeMap[node])
             nodeType = "protein"
             nodeColor = "#FFFFFF"
             nodeSize = 25
             nodeScore = 0
             nodeImage = ""
         else:
-            try:
-                nodeVals.append(abs(float(scoreMap[nodeMap[i]])))
-            except ValueError:
-                pass
-            nodeName = re.sub("'", "", nodeMap[i])
-            nodeLabel = re.sub("'", "", labelMap[nodeMap[i]])
+            nodeName = re.sub("'", "", nodeMap[node])
+            nodeLabel = re.sub("'", "", labelMap[nodeMap[node]])
             if nodeLabel == "NA":
                 nodeLabel == ""
-            nodeType = typeMap[nodeMap[i]]
-            nodeColor = getColor(scoreMap[nodeMap[i]])
-            nodeSize = getSize(scoreMap[nodeMap[i]])
-            nodeScore = scoreMap[nodeMap[i]]
+            nodeType = typeMap[nodeMap[node]]
+            nodeColor = getColor(scoreMap[nodeMap[node]], minVal = min(nodeVals), 
+                                 maxVal = max(nodeVals))
+            nodeSize = getSize(scoreMap[nodeMap[node]], minVal = min(nodeVals),
+                               maxVal = max(nodeVals))
+            nodeScore = scoreMap[nodeMap[node]]
             nodeImage = ""
-            # & (typeMap[nodeMap[i]] == "protein")
-            if (customImage):
-                if os.path.exists("%s/img/%s.png" % (feature, re.sub("[:/]", "_", nodeMap[i]))):
-                    nodeImage = "img_%s/%s.png" % (feature, re.sub("[:/]", "_", nodeMap[i]))
+            if os.path.exists("%s/img" % (featureDir)):
+                if os.path.exists("%s/img/%s.png" % (featureDir, re.sub("[:/]", "_", nodeMap[node]))):
                     nodeType = "plot"
+                    nodeImage = "img_%s/%s.png" % (featureName, re.sub("[:/]", "_", nodeMap[node]))
                     nodeColor = nodeColor
                 else:
-                    nodeImage = ""
                     nodeType = nodeType
+                    nodeImage = ""
                     nodeColor = "#FFFFFF"
                     
         graphmlContent += """       <node id="%s">\\
@@ -389,59 +413,83 @@ def main(args):
                             <data key="score">%s</data>\\
                             <data key="image">%s</data>\\
                         </node>\\
-                        """ % (i, nodeName, nodeLabel, nodeType, nodeColor, nodeSize, nodeScore, nodeImage)
-    for i in allInteractions.keys():
-        for j in allInteractions[i].keys():
+                        """ % (node, nodeName, nodeLabel, nodeType, nodeColor, nodeSize, nodeScore, nodeImage)
+    
+    ## add each connection to graphml
+    for source in interactions.keys():
+        for target in interactions[source].keys():
             graphmlContent += """   <edge source="%s" target="%s">\\
                             <data key="interaction">%s</data>\\
                         </edge>\\
-                        """ % (idMap[i], idMap[j], allInteractions[i][j])
+                        """ % (idMap[source], idMap[target], interactions[source][target])
     graphmlContent += """</graph>\\
                 </graphml>\\
                 """
     
-    ## launch cytoscape
-    if (not os.path.exists(destDir)):
-        os.system("mkdir %s" % (destDir))
-    f = open("%s/%s.html" % (destDir, feature), "w")
-    f.write(htmlHead+graphmlContent+htmlTail)
+    ## create cytoscape-web html
+    if (not os.path.exists(htmlDir)):
+        assert(os.path.exists("/".join(htmlDir.split("/")[:-1])))
+        os.system("mkdir %s" % (htmlDir))
+    o = open("%s/%s.html" % (htmlDir, featureName), "w")
+    o.write(htmlHead+graphmlContent+htmlTail)
+    o.close()
+    if os.path.exists("%s/img" % (featureDir)):
+        os.system("cp -r %s/img %s/img_%s" % (featureDir, htmlDir, featureName))
+        
+    ## update table file
+    tabHeader = ["cytoscapeweb"]
+    tabLine = [htmlLink % ("%s.html" % (featureName), featureName)]
+    for file in tableFiles:
+        if file.endswith(".pdf"):
+            (thisHeader, thisLine) = file.split(":")
+            tabHeader.append(thisHeader)
+            tabLine.append(htmlLink % ("pdf_%s/%s" % (featureName, thisLine.split("/")[-1]), "pdf"))
+            if not os.path.exists("%s/pdf_%s" % (htmlDir, featureName)):
+                os.system("mkdir %s/pdf_%s" % (htmlDir, featureName))
+            os.system("cp %s %s/pdf_%s/" % (thisLine, htmlDir, featureName))
+        else:
+            f = open(file, "r")
+            line = f.readline().rstrip()
+            if line.startswith(">"):
+                (thisHeader, thisLine) = line.split("\t")[1].split(":")
+                tabHeader.append(thisHeader)
+                tabLine.append(htmlLink % ("%s_%s.html" % (featureName, thisHeader), thisLine))
+                o = open("%s/%s_%s.html" % (htmlDir, featureName, thisHeader), "w")
+                o.write(htmlTableHead)
+                o.write(htmlTableHeader % ("</th>\n            <th>".join(f.readline().lstrip("# ").rstrip().split("\t"))))
+                for line in f:
+                    o.write(htmlTableItem % ("</td>\n            <td>".join(line.rstrip().split("\t"))))
+                o.write(htmlTableTail)
+                o.close()
+            elif line.startswith("#"):
+                thisHeader = line.split("\t")
+                thisLine = f.readline().rstrip().split("\t")
+                assert(thisLine[0] == featureName)
+                tabHeader += thisHeader[1:]
+                tabLine += thisLine[1:]
+            else:
+                log("ERROR: Unrecognized file format for table addition: %s" % (file), die = True)
+            f.close()
+            
+    if os.path.exists("%s/stats.tab" % (htmlDir)):
+        o = open("%s/stats.tab" % (htmlDir), "a")
+    else:
+        o = open("%s/stats.tab" % (htmlDir), "w")     
+        o.write("%s\n" % ("\t".join(tabHeader)))
+    o.write("%s\n" % ("\t".join(tabLine)))
+    o.close()
+    
+    ## rebuild html table
+    f = open("%s/stats.tab" % (htmlDir), "r")
+    o = open("%s/stats.html" % (htmlDir), "w")
+    o.write(htmlTableHead)
+    o.write(htmlTableHeader % ("</th>\n            <th>".join(f.readline().lstrip("# ").rstrip().split("\t"))))
+    for line in f:
+        o.write(htmlTableItem % ("</td>\n            <td>".join(line.rstrip().split("\t"))))
+    o.write(htmlTableTail)
+    o.close()
     f.close()
-    if customImage:
-        os.system("cp -r %s/img %s/img_%s" % (feature, destDir, feature))
+    ### pull this from update.html
     
-    ## mut table
-    if mutTable:
-        os.system("cp *.pdf %s/img_%s" % (destDir, feature))
-        if os.path.exists("%s/stats.tab" % (destDir)):
-            f = open("%s/stats.tab" % (destDir), "a")
-        else:
-            f = open("%s/stats.tab" % (destDir), "w")
-            f.write("Feature\tCircle\tNonMut\tMut\tStrengthScore\tMutSig\tAUC\tSignal\tBackground\tSampleTable\n")
-        s = open("sig.stats", "r")
-        stats = re.split("\t", s.readline().rstrip("\t\r\n"))
-        s.close()
-        nnonmut = stats[1]
-        nmut = stats[2]
-        testAUC = stats[3]
-        strengthScore = stats[4]
-        pMutSig = stats[5]
-        circleLink = htmlLink % ("%s/img_%s/%s.png" % (re.split("/", destDir)[-1], feature, mutGene), "png")
-        aucLink = htmlLink % ("%s/img_%s/%s.auc.pdf" % (re.split("/", destDir)[-1], feature, mutGene), "pdf (%s)" % (testAUC))
-        signalLink = htmlLink % ("%s/img_%s/%s.signal.pdf" % (re.split("/", destDir)[-1], feature, mutGene), "pdf")
-        backgroundLink = htmlLink % ("%s/img_%s/%s.background.pdf" % (re.split("/", destDir)[-1], feature, mutGene), "pdf")
-        tableLink = htmlLink % ("%s/table-%s.html" % (re.split("/", destDir)[-1], mutGene), "table")
-        f.write("%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n" % (feature, circleLink, nnonmut, nmut, strengthScore, pMutSig, aucLink, signalLink, backgroundLink, tableLink))
-        f.close()
-    
-    ## score table
-    elif scoreTable:
-        if os.path.exists("%s/stats.tab" % (destDir)):
-            f = open("%s/stats.tab" % (destDir), "a")
-        else:
-            f = open("%s/stats.tab" % (destDir), "w")
-            f.write("id\tMAX\tUQS\ttot_nodes\tnote\n")
-        f.write("%s\t%s\t%s\t%s\t%s\n" % (feature, max(nodeVals), mCalculate.quartiles(nodeVals)[2], len(allNodes.keys()), noteText))
-        f.close()
-
 if __name__ == "__main__":
     main(sys.argv[1:])

@@ -398,10 +398,10 @@ def wNodeAttributes(pNodes, scoreMap = None, directory = "."):
         else:
             labelf.write("%s = %s\n" % (node, ""))
     labelf.close()
-    ## *_SCORE.NA
+    ## SCORE.NA
     if scoreMap != None:
         for element in scoreMap.keys():
-            scoref = open("%s/%s_SCORE.NA" % (directory, element), "w")
+            scoref = open("%s/SCORE.NA" % (directory), "w")
             scoref.write("SCORE (class=java.lang.Double)\n")
             for node in scoreMap[element].keys():
                 scoref.write("%s = %s\n" % (node, scoreMap[element][node]))
@@ -612,6 +612,20 @@ def selectMutationNeighborhood(focusGene, mutSamples, dataFile, gPathway, trainS
                     pass
             nodeUnsigned[feature] = minVal
             nodeScore[feature] = minVal
+    elif method == "vsMin_svm":
+        nonScores = rankScores(scoreSVM(matData, mutatedSamples, nonSamples))
+        varScores = rankScores(scoreVariance(matData, matSamples))
+        for feature in list(set(nonScores.keys()) & set(varScores.keys())):
+            minVal = 1.0
+            valList = [nonScores[feature], varScores[feature]]
+            for i in valList:
+                try:
+                    if abs(i) < abs(minVal):
+                        minVal = i
+                except TypeError:
+                    pass
+            nodeUnsigned[feature] = minVal
+            nodeScore[feature] = minVal
     elif method == "vsMax":
         nonScores = rankScores(scoreTT(matData, mutatedSamples, nonSamples))
         varScores = rankScores(scoreVariance(matData, matSamples))
@@ -626,6 +640,20 @@ def selectMutationNeighborhood(focusGene, mutSamples, dataFile, gPathway, trainS
                     pass
             nodeUnsigned[feature] = maxVal
             nodeScore[feature] = maxVal
+    elif method == "vsMax_svm":
+        nonScores = rankScores(scoreSVM(matData, mutatedSamples, nonSamples))
+        varScores = rankScores(scoreVariance(matData, matSamples))
+        for feature in list(set(nonScores.keys()) & set(varScores.keys())):
+            maxVal = 0.0
+            valList = [nonScores[feature], varScores[feature]] 
+            for i in valList:
+                try:
+                    if abs(i) > abs(maxVal):
+                        maxVal = i
+                except TypeError:
+                    pass
+                nodeUnsigned[feature] = maxVal
+                nodeScore[feature] = maxVal
     
     ## initialize up and down pathways
     rinteractions = reverseInteractions(gPathway.interactions)
@@ -898,7 +926,7 @@ def shiftCV(mutatedGene, mutatedSamples, dataSamples, trainSamples, uPathway, dP
         mutVal = "NA"
     f = open("sig.tab", "w")
     f.write("# gene\tnon_mut\tmut\tmsep\tsignificance\tmutSig\n")
-    f.write("%s\t%s\t%s\t%s\t%s\n" % (mutatedGene, len(nonGroup_tr), len(mutGroup_tr), 
+    f.write("%s\t%s\t%s\t%s\t%s\t%s\n" % (mutatedGene, len(nonGroup_tr), len(mutGroup_tr), 
                                       msepScore["real"], significanceScore, 
                                       str(mutVal).lstrip("<")))
     f.close()
