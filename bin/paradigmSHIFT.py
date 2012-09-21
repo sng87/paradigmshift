@@ -1,9 +1,9 @@
 #!/usr/bin/env python
-"""paradigmSHIFTv2.py: a script for identifying functionally important mutations across cancer 
+"""paradigmSHIFT.py: a script for identifying functionally important mutations across cancer 
                        cohorts
 
 Usage:
-  paradigmSHIFTv2.py [options]
+  paradigmSHIFT.py [options]
 """
 ## Written By: Sam Ng
 import math, os, sys, random, re
@@ -854,5 +854,5 @@ def main():
             system("mv .jobTree .lastjobTree")
 
 if __name__ == "__main__":
-    from paradigmSHIFTv2 import *
+    from paradigmSHIFT import *
     main()     
