@@ -3,9 +3,14 @@ from copy import deepcopy
 import liblinear
 import liblinearutil
 
-def log(msg, die = False):
+def log(msg, file = None, die = False):
     """logger function"""
-    sys.stderr.write(msg)
+    if file is None:
+        sys.stderr.write(msg)
+    else:
+        l = open(file, "a")
+        l.write(msg)
+        l.close()
     if die:
         sys.exit(1)
 
@@ -429,7 +434,7 @@ def removeNode(node, pNodes, pInteractions):
 
 def retColumns(inf, delim = "\t"):
     """returns the columns of a .tsv"""
-    f = openAnyFile(inf)
+    f = open(inf, "r")
     line = f.readline()
     if line.isspace():
         log("ERROR: encountered a blank header\n", die = True)
@@ -439,7 +444,7 @@ def retColumns(inf, delim = "\t"):
 def retRows(inf, delim = "\t", index = 0, header = True):
     """returns the rows of a .tsv"""
     rows = []
-    f = openAnyFile(inf)
+    f = open(inf, "r")
     if header:
         line = f.readline()
         if line.isspace():
@@ -468,7 +473,7 @@ def rCRSData(inf, appendData = {}, delim = "\t", null = "NA", useCols = None, us
                     continue
             inData[col][row] = [appendData[col][row]]
     ## read header
-    f = openAnyFile(inf)
+    f = open(inf, "r")
     line = f.readline()
     if line.isspace():
         log("ERROR: encountered a blank on line 1\n", die = True)
@@ -500,7 +505,7 @@ def rCRSData(inf, appendData = {}, delim = "\t", null = "NA", useCols = None, us
         if debug:
             log("%s\nLENGTH: %s\n" % (line, len(pline)))
         if len(pline) != lineLength:
-            log("ERROR: length of line does not match the rest of the file\n", die = True)
+            log("ERROR: length of line does not match the rest of %s\n" % (os.path.abspath(inf)), file = "err.log" , die = True)
         for col in colFeatures:
             if row not in inData[col]:
                 inData[col][row] = []
@@ -554,7 +559,7 @@ def rwCRSData(outf, inf, delim = "\t", null = "NA", useCols = None, useRows = No
     """reads and writes .tsv"""
     colFeatures = []
     ## read header
-    f = openAnyFile(inf)
+    f = open(inf, "r")
     line = f.readline()
     if line.isspace():
         log("ERROR: encountered a blank on line 1\n", die = True)
@@ -611,7 +616,7 @@ def rwCRSData(outf, inf, delim = "\t", null = "NA", useCols = None, useRows = No
 def rList(inf, header = False):
     """read 1 column list"""
     inList = []
-    f = openAnyFile(inf)
+    f = open(inf, "r")
     if header:
         f.readline()
     for line in f:
@@ -626,7 +631,7 @@ def rPARADIGM(inf, delim = "\t", useRows = None):
     """read PARADIGM format .fa output"""
     inLikelihood = {}
     inScore = {}
-    f = openAnyFile(inf)
+    f = open(inf, "r")
     for line in f:
         if line.isspace():
             continue
@@ -789,6 +794,14 @@ def scoreSVM(matData, posSamples, negSamples):
     prob = liblinear.problem(svmLabels, svmData)
     param = liblinear.parameter('-s 3 -c 5 -q')
     liblinearutil.save_model('model_file', liblinearutil.train(prob, param))
+    # m = liblinearutil.train(prob, param)
+    # testLabels = [] ## like svmLabels
+    # testData = [] ## like svmData
+    # for i in range(len(testLabels)):
+    #     x0, max_idx = gen_feature_nodearray(testData[i])
+    #     label = liblinear.predict(m, x0)
+    #     if label == testLabels[i]:
+    #         print "correct!"
     weights = rList("model_file")[6:]
     scoreMap = {}
     for feature in featureMap.keys():

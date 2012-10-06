@@ -30,11 +30,7 @@ else:
 
 ## executables and directories
 paradigmExec = "paradigm"
-mswarmExec = "mergeSwarmFiles.py"
-mmergeExec = "merge_merged.py"
 circleExec = "circlePlot.py"
-medianExec = "median-center.py"
-cytowebExec = "layout-cytoscapeweb.py"
 htmlDir = "/hive/users/sng/.html"
 
 ## params variables
@@ -69,6 +65,7 @@ if "cohortName" not in paramMap:
 ## default variables
 useGreedy = False
 useFlattened = True                             ## Flattens complexes to prevent long complex chains
+maxFeatures = 10
 mutationThreshold = 5                           ## Minimum mutations in cohort needed to consider a gene
 maxDistanceParam = max(paramMap["dist"]) + 1
 
@@ -270,18 +267,18 @@ class branchGenes(Target):
         os.chdir(self.directory)
         
         ## branch genes
-        includeFeatures = []
+        htmlFeatures = []
         if not os.path.exists("analysis"):
             system("mkdir analysis")
         for mutatedGene in self.mutationMap.keys():
             if not os.path.exists("analysis/%s" % (mutatedGene)):
                 system("mkdir analysis/%s" % (mutatedGene))
-                includeFeatures.append(mutatedGene)
+                htmlFeatures.append(mutatedGene)
                 self.addChildTarget(branchFolds(mutatedGene, self.mutationMap[mutatedGene], 
                                             self.dataSamples, self.dataFeatures, self.dataMap, 
                                             self.gPathway, self.paradigmDir, self.directory))
         if os.path.exists(htmlDir):
-            self.setFollowOnTarget(pshiftReport(includeFeatures, "%s/%s" % (htmlDir, paramMap["cohortName"]), self.directory))
+            self.setFollowOnTarget(pshiftReport(htmlFeatures, "%s/%s" % (htmlDir, paramMap["cohortName"]), self.directory))
 
 class branchFolds(Target):
     def __init__(self, mutatedGene, mutatedSamples, dataSamples, dataFeatures, dataMap, gPathway, 
@@ -586,11 +583,13 @@ class runPARADIGM(Target):
         
         ## run paradigm (observed and nulls)
         system("echo Running PARADIGM inference ... >> progress.log")
-        self.addChildTarget(jtCmd("%s -p upstream_pathway.tab -c config.txt -b %s -o %s" % (paradigmExec, "%s/up_" % (self.dataPath), "%s_upstream.fa" % (self.mutatedGene)), self.directory))
-        self.addChildTarget(jtCmd("%s -p downstream_pathway.tab -c config.txt -b %s -o %s" % (paradigmExec, "%s/down_" % (self.dataPath), "%s_downstream.fa" % (self.mutatedGene)), self.directory))
-        for null in range(1, nNulls+1):
-            self.addChildTarget(jtCmd("%s -p upstream_pathway.tab -c config.txt -b %s -o %s" % (paradigmExec, "%s/up_N%s_" % (self.dataPath, null), "N%s_%s_upstream.fa" % (null, self.mutatedGene)), self.directory))
-            self.addChildTarget(jtCmd("%s -p downstream_pathway.tab -c config.txt -b %s -o %s" % (paradigmExec, "%s/down_N%s_" % (self.dataPath, null), "N%s_%s_downstream.fa" % (null, self.mutatedGene)), self.directory))
+        system("mkdir outputFiles")
+        for b in range(len(self.dataSamples)):
+            self.addChildTarget(jtCmd("%s -p upstream_pathway.tab -c config.txt -b %s -o %s -s %s,%s" % (paradigmExec, "%s/up_" % (self.dataPath), "outputFiles/%s_upstream_b%s_%s.fa" % (self.mutatedGene, b, len(self.dataSamples)), b, len(self.dataSamples)), self.directory))
+            self.addChildTarget(jtCmd("%s -p downstream_pathway.tab -c config.txt -b %s -o %s -s %s,%s" % (paradigmExec, "%s/down_" % (self.dataPath), "outputFiles/%s_downstream_b%s_%s.fa" % (self.mutatedGene, b, len(self.dataSamples)), b, len(self.dataSamples)), self.directory))
+            for null in range(1, nNulls+1):
+                self.addChildTarget(jtCmd("%s -p upstream_pathway.tab -c config.txt -b %s -o %s -s %s,%s" % (paradigmExec, "%s/up_N%s_" % (self.dataPath, null), "outputFiles/N%s_%s_upstream_b%s_%s.fa" % (null, self.mutatedGene, b, len(self.dataSamples)), b, len(self.dataSamples)), self.directory))
+                self.addChildTarget(jtCmd("%s -p downstream_pathway.tab -c config.txt -b %s -o %s -s %s,%s" % (paradigmExec, "%s/down_N%s_" % (self.dataPath, null), "outputFiles/N%s_%s_downstream_b%s_%s.fa" % (null, self.mutatedGene, b, len(self.dataSamples)), b, len(self.dataSamples)), self.directory))
         self.setFollowOnTarget(evaluateCV(self.fold, self.mutatedGene, self.mutatedSamples, 
                                           self.dataSamples, self.trainSamples, self.uPathway, 
                                           self.dPathway, self.directory))
@@ -609,6 +608,13 @@ class evaluateCV(Target):
         self.directory = directory
     def run(self):
         os.chdir(self.directory)
+        for b in range(len(self.dataSamples)):
+            system("cat outputFiles/%s_upstream_b%s_%s.fa >> %s_upstream.fa" % (self.mutatedGene, b, len(self.dataSamples), self.mutatedGene))
+            system("cat outputFiles/%s_downstream_b%s_%s.fa >> %s_upstream.fa" % (self.mutatedGene, b, len(self.dataSamples), self.mutatedGene))
+            for null in range(1, nNulls+1):
+                system("cat outputFiles/N%s_%s_upstream_b%s_%s.fa >> N%s_%s_upstream.fa" % (null, self.mutatedGene, b, len(self.dataSamples), null, self.mutatedGene))
+                system("cat outputFiles/N%s_%s_downstream_b%s_%s.fa >> N%s_%s_upstream.fa" % (null, self.mutatedGene, b, len(self.dataSamples), null, self.mutatedGene))
+        system("rm -rf outputFiles")
         
         shiftCV(self.mutatedGene, self.mutatedSamples, self.dataSamples, self.trainSamples, 
                 self.uPathway, self.dPathway, nNulls = nNulls)
@@ -658,7 +664,7 @@ class evaluateParams(Target):
                         if auc_tr > topAUC_tr:
                             topAUC_tr = auc_tr
                             topAUC_te = auc_te
-                            topAUC_params = [str(dist), str(thresh), str(inc), method]
+                            topAUC_params = [str(dist), str(thresh), str(inc), str(method)]
         if self.fold != 0:
             f = open("auc.stat", "w")
             if topAUC_tr == 0:
@@ -667,9 +673,10 @@ class evaluateParams(Target):
                 f.write("%s\t%s\t%s\n" % (topAUC_tr, topAUC_te, ",".join(topAUC_params)))
             f.close()
         else:
-            self.setFollowOnTarget(mutationSHIFT(topAUC_params, self.mutatedGene, 
-                                                 self.mutatedSamples, self.dataSamples, 
-                                                 self.dataMap, self.gPathway, self.directory))
+            if topAUC_params is not None:
+                self.setFollowOnTarget(mutationSHIFT(topAUC_params, self.mutatedGene, 
+                                                     self.mutatedSamples, self.dataSamples, 
+                                                     self.dataMap, self.gPathway, self.directory))
             
 class mutationSHIFT(Target):
     def __init__(self, topAUC_params, mutatedGene, mutatedSamples, dataSamples, 
@@ -739,13 +746,15 @@ class pshiftReport(Target):
         
         ## cytoscape-web
         for mutatedGene in self.includeFeatures:
-            tableFiles = []
-            tableFiles.append("analysis/%s/sig.tab" % (mutatedGene))
-            tableFiles.append("msepPlot:analysis/%s/%s.msep.pdf" % (mutatedGene, mutatedGene))
-            tableFiles.append("backgroundPlot:analysis/%s/%s.background.pdf" % (mutatedGene, mutatedGene))
-            tableFiles.append("analysis/%s/avgAUC.tab" % (mutatedGene))
-            tableFiles.append("analysis/%s/pshift.tab" % (mutatedGene))
-            system("pathmark-report.py -t %s analysis/%s %s" % (",".join(tableFiles), mutatedGene, self.reportDir))
+            if os.path.exists("analysis/%s/sig.tab" % (mutatedGene)):
+                tableFiles = []
+                tableFiles.append("analysis/%s/sig.tab" % (mutatedGene))
+                tableFiles.append("msepPlot:analysis/%s/%s.msep.pdf" % (mutatedGene, mutatedGene))
+                tableFiles.append("backgroundPlot:analysis/%s/%s.background.pdf" % (mutatedGene, mutatedGene))
+                tableFiles.append("analysis/%s/avgAUC.tab" % (mutatedGene))
+                tableFiles.append("analysis/%s/pshift.tab" % (mutatedGene))
+                system("pathmark-report.py -t %s analysis/%s %s" % (",".join(tableFiles), mutatedGene, self.reportDir))
+                system("cp analysis/%s/pshift* %s" % (mutatedGene, self.reportDir))
 
 def main():
     ## check for fresh run
@@ -816,6 +825,7 @@ def main():
     else:
         gPathway = gfPathway
     
+    mutationOrder = []
     mutationMap = {}
     f = open(mutFile, "r")
     for line in f:
@@ -826,18 +836,27 @@ def main():
         mutatedSamples = list(set(re.split(",", pline[2])) & set(dataSamples))
         if mutatedGene in gPathway.nodes:
             if len(mutatedSamples) >= mutationThreshold:
-                if includeFeatures is not None:
-                    if mutatedGene not in includeFeatures:
-                        continue
-                mutationMap[mutatedGene] = deepcopy(mutatedSamples)    
+                mutationMap[mutatedGene] = deepcopy(mutatedSamples)
+                if includeFeatures is None:
+                    mutationOrder.append(mutatedGene)
     f.close()
+    if includeFeatures is not None:
+        for mutatedGene in includeFeatures:
+            if mutatedGene in mutationMap:
+                mutationOrder.append(mutatedGene)
+     
+    submitMap = {}
+    for mutatedGene in mutationOrder:
+        submitMap[mutatedGene] = deepcopy(mutationMap[mutatedGene])
+        if len(submitMap.keys()) >= maxFeatures:
+            break
     
     ## run
     logger.info("options: " + str(options))
     logger.info("starting make")
     writeScripts()
     
-    s = Stack(branchGenes(dataSamples, dataFeatures, dataMap, mutationMap, gPathway, paradigmDir, 
+    s = Stack(branchGenes(dataSamples, dataFeatures, dataMap, submitMap, gPathway, paradigmDir, 
               os.getcwd()))
     if options.jobFile:
         s.addToJobFile(options.jobFile)
