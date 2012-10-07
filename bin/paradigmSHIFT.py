@@ -610,10 +610,10 @@ class evaluateCV(Target):
         os.chdir(self.directory)
         for b in range(len(self.dataSamples)):
             system("cat outputFiles/%s_upstream_b%s_%s.fa >> %s_upstream.fa" % (self.mutatedGene, b, len(self.dataSamples), self.mutatedGene))
-            system("cat outputFiles/%s_downstream_b%s_%s.fa >> %s_upstream.fa" % (self.mutatedGene, b, len(self.dataSamples), self.mutatedGene))
+            system("cat outputFiles/%s_downstream_b%s_%s.fa >> %s_downstream.fa" % (self.mutatedGene, b, len(self.dataSamples), self.mutatedGene))
             for null in range(1, nNulls+1):
                 system("cat outputFiles/N%s_%s_upstream_b%s_%s.fa >> N%s_%s_upstream.fa" % (null, self.mutatedGene, b, len(self.dataSamples), null, self.mutatedGene))
-                system("cat outputFiles/N%s_%s_downstream_b%s_%s.fa >> N%s_%s_upstream.fa" % (null, self.mutatedGene, b, len(self.dataSamples), null, self.mutatedGene))
+                system("cat outputFiles/N%s_%s_downstream_b%s_%s.fa >> N%s_%s_downstream.fa" % (null, self.mutatedGene, b, len(self.dataSamples), null, self.mutatedGene))
         system("rm -rf outputFiles")
         
         shiftCV(self.mutatedGene, self.mutatedSamples, self.dataSamples, self.trainSamples, 

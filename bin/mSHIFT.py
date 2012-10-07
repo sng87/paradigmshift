@@ -1,7 +1,5 @@
 import math, os, sys, random, re
 from copy import deepcopy
-import liblinear
-import liblinearutil
 
 def log(msg, file = None, die = False):
     """logger function"""
@@ -63,7 +61,7 @@ class Pathway:
         log("found %s subpathway components\n" % (len(components)))
         (self.nodes, self.interactions) = constructInteractions(components[0], self.nodes, self.interactions)
     def wAliasMap(self, hugof, outf):
-        hugoList = mData.rList(hugof)
+        hugoList = rList(hugof)
         if self.pid != None:
             prefix = "%s_" % (self.pid)
         else:
@@ -775,6 +773,8 @@ def rankScores(scoreMap):
     return(rankMap)
 
 def scoreSVM(matData, posSamples, negSamples):
+    import liblinear
+    import liblinearutil
     svmLabels = []
     svmData = []
     featureMap = {}
