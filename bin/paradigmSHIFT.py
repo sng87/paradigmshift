@@ -39,7 +39,6 @@ useGreedy = False
 useFlattened = True                             ## Flattens complexes to prevent long complex chains
 maxFeatures = 10
 mutationThreshold = 5                           ## Minimum mutations in cohort needed to consider a gene
-maxDistanceParam = max(paramMap["dist"]) + 1
 
 rRepeats = 1
 mFolds = 5
@@ -234,7 +233,7 @@ class branchGenes(Target):
         self.mutationMap = mutationMap
         self.gPathway = gPathway
         self.paradigmDir = paradigmDir
-		self.paramMap = paramMap
+        self.paramMap = paramMap
         self.directory = directory
     def run(self):
         os.chdir(self.directory)
@@ -265,7 +264,7 @@ class branchFolds(Target):
         self.dataMap = dataMap
         self.gPathway = gPathway
         self.paradigmDir = paradigmDir
-		self.paramMap = paramMap
+        self.paramMap = paramMap
         self.directory = directory
     def run(self):
         shiftDir = "%s/analysis/%s" % (self.directory, self.mutatedGene)
@@ -274,10 +273,10 @@ class branchFolds(Target):
         
         ## prepare htmlDir
         
-        ## get proteinFeatures from maxDistanceParam and gPathway
+        ## get proteinFeatures based on maxDist  and gPathway
         system("echo Preparing Genomic Data ... >> progress.log")
         proteinFeatures = []
-        for feature in getNeighbors(self.mutatedGene, maxDistanceParam, self.gPathway.interactions):
+        for feature in getNeighbors(self.mutatedGene, max(self.paramMap["dist"]) + 1, self.gPathway.interactions):
             if self.gPathway.nodes[feature] == "protein":
                 proteinFeatures.append(feature)
         
@@ -339,7 +338,7 @@ class branchParams(Target):
         self.dataMap = dataMap
         self.gPathway = gPathway
         self.paradigmDir = paradigmDir
-		self.paramMap = paramMap
+        self.paramMap = paramMap
         self.directory = directory
     def run(self):
         if self.fold == 0:
@@ -616,7 +615,7 @@ class evaluateParams(Target):
         self.dataFeatures = dataFeatures
         self.dataMap = dataMap
         self.gPathway = gPathway
-		self.paramMap = paramMap
+        self.paramMap = paramMap
         self.directory = directory
     def run(self):
         if self.fold == 0:
@@ -769,35 +768,35 @@ def main():
     sampleFile = options.includeSamples
     featureFile = options.includeFeatures
     
-	## paramMap
-	paramMap = {}
-	paramMap["dist"] = [2]
-	paramMap["thresh"] = [0.3]
-	paramMap["inc"] = [0.0]
-	paramMap["method"] = ["vsMax"]
-	paramMap["stat"] = "tt"
-	if os.path.exists("mut.cfg"):
-		f = open("mut.cfg", "r")
-		for line in f:
-			if line.isspace():
-				continue
-			pline = re.split("\t", line.rstrip("\n"))
-			if line.startswith("distanceParams"):
-				paramMap["dist"] = [int(i) for i in re.split(",", pline[1])]
-			elif line.startswith("tstatParams"):
-				paramMap["thresh"] = [float(i) for i in re.split(",", pline[1])]
-			elif line.startswith("incrParams"):
-				paramMap["inc"] = [float(i) for i in re.split(",", pline[1])]
-			elif line.startswith("methodParams"):
-				paramMap["method"] = [i for i in re.split(",", pline[1])]
-			elif line.startswith("signalMethod"):
-				paramMap["stat"] = int(pline[1])
-			elif line.startswith("cohortName"):
-				paramMap["cohortName"] = pline[1]
-		f.close()
-	if "cohortName" not in paramMap:
-		paramMap["cohortName"] = re.split("/", os.getcwd())[-1]
-	
+    ## paramMap
+    paramMap = {}
+    paramMap["dist"] = [2]
+    paramMap["thresh"] = [0.3]
+    paramMap["inc"] = [0.0]
+    paramMap["method"] = ["vsMax"]
+    paramMap["stat"] = "tt"
+    if os.path.exists("mut.cfg"):
+        f = open("mut.cfg", "r")
+        for line in f:
+            if line.isspace():
+                continue
+            pline = re.split("\t", line.rstrip("\n"))
+            if line.startswith("distanceParams"):
+                paramMap["dist"] = [int(i) for i in re.split(",", pline[1])]
+            elif line.startswith("tstatParams"):
+                paramMap["thresh"] = [float(i) for i in re.split(",", pline[1])]
+            elif line.startswith("incrParams"):
+                paramMap["inc"] = [float(i) for i in re.split(",", pline[1])]
+            elif line.startswith("methodParams"):
+                paramMap["method"] = [i for i in re.split(",", pline[1])]
+            elif line.startswith("signalMethod"):
+               paramMap["stat"] = int(pline[1])
+            elif line.startswith("cohortName"):
+                paramMap["cohortName"] = pline[1]
+        f.close()
+    if "cohortName" not in paramMap:
+        paramMap["cohortName"] = re.split("/", os.getcwd())[-1]
+    
     ## check files
     pathwayFile = None
     cnvFile = None
