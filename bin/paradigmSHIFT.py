@@ -33,36 +33,8 @@ paradigmExec = "paradigm"
 circleExec = "circlePlot.py"
 htmlDir = "/hive/users/sng/.html"
 
-## params variables
-paramMap = {}
-paramMap["dist"] = [2]
-paramMap["thresh"] = [0.3]
-paramMap["inc"] = [0.0]
-paramMap["method"] = ["vsMax"]
-paramMap["stat"] = "tt"
-if os.path.exists("mut.cfg"):
-    f = open("mut.cfg", "r")
-    for line in f:
-        if line.isspace():
-            continue
-        pline = re.split("\t", line.rstrip("\n"))
-        if line.startswith("distanceParams"):
-            paramMap["dist"] = [int(i) for i in re.split(",", pline[1])]
-        elif line.startswith("tstatParams"):
-            paramMap["thresh"] = [float(i) for i in re.split(",", pline[1])]
-        elif line.startswith("incrParams"):
-            paramMap["inc"] = [float(i) for i in re.split(",", pline[1])]
-        elif line.startswith("methodParams"):
-            paramMap["method"] = [i for i in re.split(",", pline[1])]
-        elif line.startswith("signalMethod"):
-            paramMap["stat"] = int(pline[1])
-        elif line.startswith("cohortName"):
-            paramMap["cohortName"] = pline[1]
-    f.close()
-if "cohortName" not in paramMap:
-    paramMap["cohortName"] = re.split("/", os.getcwd())[-1]
-
 ## default variables
+paradigmPublic = True
 useGreedy = False
 useFlattened = True                             ## Flattens complexes to prevent long complex chains
 maxFeatures = 10
@@ -254,7 +226,7 @@ class jtCmd(Target):
 
 class branchGenes(Target):
     def __init__(self, dataSamples, dataFeatures, dataMap, mutationMap, gPathway, paradigmDir, 
-                 directory):
+                 paramMap, directory):
         Target.__init__(self, time=10000)
         self.dataSamples = dataSamples
         self.dataFeatures = dataFeatures
@@ -262,6 +234,7 @@ class branchGenes(Target):
         self.mutationMap = mutationMap
         self.gPathway = gPathway
         self.paradigmDir = paradigmDir
+		self.paramMap = paramMap
         self.directory = directory
     def run(self):
         os.chdir(self.directory)
@@ -276,13 +249,14 @@ class branchGenes(Target):
                 htmlFeatures.append(mutatedGene)
                 self.addChildTarget(branchFolds(mutatedGene, self.mutationMap[mutatedGene], 
                                             self.dataSamples, self.dataFeatures, self.dataMap, 
-                                            self.gPathway, self.paradigmDir, self.directory))
+                                            self.gPathway, self.paradigmDir, self.paramMap, 
+											self.directory))
         if os.path.exists(htmlDir):
-            self.setFollowOnTarget(pshiftReport(htmlFeatures, "%s/%s" % (htmlDir, paramMap["cohortName"]), self.directory))
+            self.setFollowOnTarget(pshiftReport(htmlFeatures, "%s/%s" % (htmlDir, self.paramMap["cohortName"]), self.directory))
 
 class branchFolds(Target):
     def __init__(self, mutatedGene, mutatedSamples, dataSamples, dataFeatures, dataMap, gPathway, 
-                 paradigmDir, directory):
+                 paradigmDir, paramMap, directory):
         Target.__init__(self, time=10000)
         self.mutatedGene = mutatedGene
         self.mutatedSamples = mutatedSamples
@@ -291,6 +265,7 @@ class branchFolds(Target):
         self.dataMap = dataMap
         self.gPathway = gPathway
         self.paradigmDir = paradigmDir
+		self.paramMap = paramMap
         self.directory = directory
     def run(self):
         shiftDir = "%s/analysis/%s" % (self.directory, self.mutatedGene)
@@ -343,17 +318,17 @@ class branchFolds(Target):
                 self.addChildTarget(branchParams(fold, self.mutatedGene, self.mutatedSamples, 
                                                  self.dataSamples, foldSamples[r][f], 
                                                  self.dataFeatures, self.dataMap, self.gPathway,
-                                                 self.paradigmDir, self.directory))
+                                                 self.paradigmDir, self.paramMap, self.directory))
         
         ## run final
         self.setFollowOnTarget(branchParams(0, self.mutatedGene, self.mutatedSamples, 
                                             self.dataSamples, self.dataSamples, self.dataFeatures, 
                                             self.dataMap, self.gPathway, self.paradigmDir, 
-                                            self.directory))
+                                            self.paramMap, self.directory))
 
 class branchParams(Target):
     def __init__(self, fold, mutatedGene, mutatedSamples, dataSamples, trainSamples, dataFeatures, 
-                 dataMap, gPathway, paradigmDir, directory):
+                 dataMap, gPathway, paradigmDir, paramMap, directory):
         Target.__init__(self, time=10000)
         self.fold = fold
         self.mutatedGene = mutatedGene
@@ -364,6 +339,7 @@ class branchParams(Target):
         self.dataMap = dataMap
         self.gPathway = gPathway
         self.paradigmDir = paradigmDir
+		self.paramMap = paramMap
         self.directory = directory
     def run(self):
         if self.fold == 0:
@@ -395,10 +371,10 @@ class branchParams(Target):
             o.close()
         
         ## branch params
-        for dist in paramMap["dist"]:
-            for thresh in paramMap["thresh"]:
-                for inc in paramMap["inc"]:
-                    for method in paramMap["method"]:
+        for dist in self.paramMap["dist"]:
+            for thresh in self.paramMap["thresh"]:
+                for inc in self.paramMap["inc"]:
+                    for method in self.paramMap["method"]:
                         system("mkdir param_%s_%s_%s_%s" % (dist, thresh, inc, method))
                         os.chdir("param_%s_%s_%s_%s" % (dist, thresh, inc, method))
                         system("cp %s/config.txt config.txt" % (self.paradigmDir))
@@ -419,7 +395,7 @@ class branchParams(Target):
         self.setFollowOnTarget(evaluateParams(self.fold, self.mutatedGene, self.mutatedSamples, 
                                               self.dataSamples, self.trainSamples, 
                                               self.dataFeatures, self.dataMap, self.gPathway, 
-                                              self.directory))
+                                              self.paramMap, self.directory))
         
 class prepareNeighborhood(Target):
     def __init__(self, fold, mutatedGene, mutatedSamples, dataSamples, trainSamples, dParam,
@@ -583,13 +559,20 @@ class runPARADIGM(Target):
         
         ## run paradigm (observed and nulls)
         system("echo Running PARADIGM inference ... >> progress.log")
-        system("mkdir outputFiles")
-        for b in range(len(self.dataSamples)):
-            self.addChildTarget(jtCmd("%s -p upstream_pathway.tab -c config.txt -b %s -o %s -s %s,%s" % (paradigmExec, "%s/up_" % (self.dataPath), "outputFiles/%s_upstream_b%s_%s.fa" % (self.mutatedGene, b, len(self.dataSamples)), b, len(self.dataSamples)), self.directory))
-            self.addChildTarget(jtCmd("%s -p downstream_pathway.tab -c config.txt -b %s -o %s -s %s,%s" % (paradigmExec, "%s/down_" % (self.dataPath), "outputFiles/%s_downstream_b%s_%s.fa" % (self.mutatedGene, b, len(self.dataSamples)), b, len(self.dataSamples)), self.directory))
-            for null in range(1, nNulls+1):
-                self.addChildTarget(jtCmd("%s -p upstream_pathway.tab -c config.txt -b %s -o %s -s %s,%s" % (paradigmExec, "%s/up_N%s_" % (self.dataPath, null), "outputFiles/N%s_%s_upstream_b%s_%s.fa" % (null, self.mutatedGene, b, len(self.dataSamples)), b, len(self.dataSamples)), self.directory))
-                self.addChildTarget(jtCmd("%s -p downstream_pathway.tab -c config.txt -b %s -o %s -s %s,%s" % (paradigmExec, "%s/down_N%s_" % (self.dataPath, null), "outputFiles/N%s_%s_downstream_b%s_%s.fa" % (null, self.mutatedGene, b, len(self.dataSamples)), b, len(self.dataSamples)), self.directory))
+        if not paradigmPublic:
+			self.addChildTarget(jtCmd("%s -p upstream_pathway.tab -c config.txt -b %s -o %s" % (paradigmExec, "%s/up_" % (self.dataPath), "%s_upstream.fa" % (self.mutatedGene)), self.directory))
+			self.addChildTarget(jtCmd("%s -p downstream_pathway.tab -c config.txt -b %s -o %s" % (paradigmExec, "%s/down_" % (self.dataPath), "%s_downstream.fa" % (self.mutatedGene)), self.directory))
+			for null in range(1, nNulls+1):
+				self.addChildTarget(jtCmd("%s -p upstream_pathway.tab -c config.txt -b %s -o %s" % (paradigmExec, "%s/up_N%s_" % (self.dataPath, null), "N%s_%s_upstream.fa" % (null, self.mutatedGene)), self.directory))
+				self.addChildTarget(jtCmd("%s -p downstream_pathway.tab -c config.txt -b %s -o %s" % (paradigmExec, "%s/down_N%s_" % (self.dataPath, null), "N%s_%s_downstream.fa" % (null, self.mutatedGene)), self.directory))
+        else:
+            system("mkdir outputFiles")
+            for b in range(len(self.dataSamples)):
+                self.addChildTarget(jtCmd("%s -p upstream_pathway.tab -c config.txt -b %s -o %s -s %s,%s" % (paradigmExec, "%s/up_" % (self.dataPath), "outputFiles/%s_upstream_b%s_%s.fa" % (self.mutatedGene, b, len(self.dataSamples)), b, len(self.dataSamples)), self.directory))
+                self.addChildTarget(jtCmd("%s -p downstream_pathway.tab -c config.txt -b %s -o %s -s %s,%s" % (paradigmExec, "%s/down_" % (self.dataPath), "outputFiles/%s_downstream_b%s_%s.fa" % (self.mutatedGene, b, len(self.dataSamples)), b, len(self.dataSamples)), self.directory))
+                for null in range(1, nNulls+1):
+                    self.addChildTarget(jtCmd("%s -p upstream_pathway.tab -c config.txt -b %s -o %s -s %s,%s" % (paradigmExec, "%s/up_N%s_" % (self.dataPath, null), "outputFiles/N%s_%s_upstream_b%s_%s.fa" % (null, self.mutatedGene, b, len(self.dataSamples)), b, len(self.dataSamples)), self.directory))
+                    self.addChildTarget(jtCmd("%s -p downstream_pathway.tab -c config.txt -b %s -o %s -s %s,%s" % (paradigmExec, "%s/down_N%s_" % (self.dataPath, null), "outputFiles/N%s_%s_downstream_b%s_%s.fa" % (null, self.mutatedGene, b, len(self.dataSamples)), b, len(self.dataSamples)), self.directory))
         self.setFollowOnTarget(evaluateCV(self.fold, self.mutatedGene, self.mutatedSamples, 
                                           self.dataSamples, self.trainSamples, self.uPathway, 
                                           self.dPathway, self.directory))
@@ -608,20 +591,22 @@ class evaluateCV(Target):
         self.directory = directory
     def run(self):
         os.chdir(self.directory)
-        for b in range(len(self.dataSamples)):
-            system("cat outputFiles/%s_upstream_b%s_%s.fa >> %s_upstream.fa" % (self.mutatedGene, b, len(self.dataSamples), self.mutatedGene))
-            system("cat outputFiles/%s_downstream_b%s_%s.fa >> %s_downstream.fa" % (self.mutatedGene, b, len(self.dataSamples), self.mutatedGene))
-            for null in range(1, nNulls+1):
-                system("cat outputFiles/N%s_%s_upstream_b%s_%s.fa >> N%s_%s_upstream.fa" % (null, self.mutatedGene, b, len(self.dataSamples), null, self.mutatedGene))
-                system("cat outputFiles/N%s_%s_downstream_b%s_%s.fa >> N%s_%s_downstream.fa" % (null, self.mutatedGene, b, len(self.dataSamples), null, self.mutatedGene))
-        system("rm -rf outputFiles")
+        
+        if paradigmPublic:
+            for b in range(len(self.dataSamples)):
+                system("cat outputFiles/%s_upstream_b%s_%s.fa >> %s_upstream.fa" % (self.mutatedGene, b, len(self.dataSamples), self.mutatedGene))
+                system("cat outputFiles/%s_downstream_b%s_%s.fa >> %s_downstream.fa" % (self.mutatedGene, b, len(self.dataSamples), self.mutatedGene))
+                for null in range(1, nNulls+1):
+                    system("cat outputFiles/N%s_%s_upstream_b%s_%s.fa >> N%s_%s_upstream.fa" % (null, self.mutatedGene, b, len(self.dataSamples), null, self.mutatedGene))
+                    system("cat outputFiles/N%s_%s_downstream_b%s_%s.fa >> N%s_%s_downstream.fa" % (null, self.mutatedGene, b, len(self.dataSamples), null, self.mutatedGene))
+            system("rm -rf outputFiles")
         
         shiftCV(self.mutatedGene, self.mutatedSamples, self.dataSamples, self.trainSamples, 
                 self.uPathway, self.dPathway, nNulls = nNulls)
 
 class evaluateParams(Target):
     def __init__(self, fold, mutatedGene, mutatedSamples, dataSamples, trainSamples, dataFeatures, 
-                 dataMap, gPathway, directory):
+                 dataMap, gPathway, paramMap, directory):
         Target.__init__(self, time=10000)
         self.fold = fold
         self.mutatedGene = mutatedGene
@@ -631,6 +616,7 @@ class evaluateParams(Target):
         self.dataFeatures = dataFeatures
         self.dataMap = dataMap
         self.gPathway = gPathway
+		self.paramMap = paramMap
         self.directory = directory
     def run(self):
         if self.fold == 0:
@@ -645,10 +631,10 @@ class evaluateParams(Target):
         topAUC_tr = 0
         topAUC_te = 0
         topAUC_params = None
-        for dist in paramMap["dist"]:
-            for thresh in paramMap["thresh"]:
-                for inc in paramMap["inc"]:
-                    for method in paramMap["method"]:
+        for dist in self.paramMap["dist"]:
+            for thresh in self.paramMap["thresh"]:
+                for inc in self.paramMap["inc"]:
+                    for method in self.paramMap["method"]:
                         f = open("param_%s_%s_%s_%s/auc.stat" % (dist, thresh, inc, method), "r")
                         line = f.readline()
                         f.close()
@@ -782,7 +768,36 @@ def main():
     mutFile = args[1]
     sampleFile = options.includeSamples
     featureFile = options.includeFeatures
-        
+    
+	## paramMap
+	paramMap = {}
+	paramMap["dist"] = [2]
+	paramMap["thresh"] = [0.3]
+	paramMap["inc"] = [0.0]
+	paramMap["method"] = ["vsMax"]
+	paramMap["stat"] = "tt"
+	if os.path.exists("mut.cfg"):
+		f = open("mut.cfg", "r")
+		for line in f:
+			if line.isspace():
+				continue
+			pline = re.split("\t", line.rstrip("\n"))
+			if line.startswith("distanceParams"):
+				paramMap["dist"] = [int(i) for i in re.split(",", pline[1])]
+			elif line.startswith("tstatParams"):
+				paramMap["thresh"] = [float(i) for i in re.split(",", pline[1])]
+			elif line.startswith("incrParams"):
+				paramMap["inc"] = [float(i) for i in re.split(",", pline[1])]
+			elif line.startswith("methodParams"):
+				paramMap["method"] = [i for i in re.split(",", pline[1])]
+			elif line.startswith("signalMethod"):
+				paramMap["stat"] = int(pline[1])
+			elif line.startswith("cohortName"):
+				paramMap["cohortName"] = pline[1]
+		f.close()
+	if "cohortName" not in paramMap:
+		paramMap["cohortName"] = re.split("/", os.getcwd())[-1]
+	
     ## check files
     pathwayFile = None
     cnvFile = None
@@ -807,7 +822,7 @@ def main():
         paradigmFile = "%s/merge_merged_unfiltered.tab" % (paradigmDir)
     elif os.path.exists("%s/merge_merged.tab" % (paradigmDir)):
         paradigmFile = "%s/merge_merged.tab" % (paradigmDir)
- 
+	
     ## store feature, sample and pathway information
     dataFeatures = list(set(retColumns(cnvFile)) & set(retColumns(expFile)))
     includeFeatures = None
@@ -824,7 +839,7 @@ def main():
         gPathway = Pathway(gNodes, gInteractions)
     else:
         gPathway = gfPathway
-    
+	
     mutationOrder = []
     mutationMap = {}
     f = open(mutFile, "r")
@@ -857,7 +872,7 @@ def main():
     writeScripts()
     
     s = Stack(branchGenes(dataSamples, dataFeatures, dataMap, submitMap, gPathway, paradigmDir, 
-              os.getcwd()))
+              paramMap, os.getcwd()))
     if options.jobFile:
         s.addToJobFile(options.jobFile)
     else:
