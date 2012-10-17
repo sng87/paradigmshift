@@ -1,9 +1,6 @@
 #!/usr/bin/env python
-"""paradigmSHIFT.py: a script for identifying functionally important mutations across cancer 
-                       cohorts
-
-Usage:
-  paradigmSHIFT.py [options]
+"""
+paradigmSHIFT.py
 """
 ## Written By: Sam Ng
 import math, os, sys, random, re
@@ -31,18 +28,15 @@ else:
 ## executables and directories
 paradigmExec = "paradigm"
 circleExec = "circlePlot.py"
-htmlDir = "/hive/users/sng/.html"
+htmlDir = "/inside/grotto/users/sng/.html"
 
 ## default variables
-paradigmPublic = True
-useGreedy = False
-useFlattened = True                             ## Flattens complexes to prevent long complex chains
-maxFeatures = 10
-mutationThreshold = 5                           ## Minimum mutations in cohort needed to consider a gene
-
-rRepeats = 1
-mFolds = 5
-nNulls = 10
+paradigmPublic = False            ## Use public binary (does not support sample splitting)
+useGreedy = False                 ## Use greedy network search (not implemented)
+useFlattened = True               ## Flattens complexes to prevent long complex chains
+maxFeatures = 10                  ## Maximum number of features to in PARADIGM Shift run
+mutationThreshold = 5             ## Minimum mutations in cohort needed to consider a gene
+nNulls = 30                       ## Number of nulls to run for background model
 
 def writeScripts():
     """creates the R scripts necessary for plotting"""
@@ -225,7 +219,7 @@ class jtCmd(Target):
 
 class branchGenes(Target):
     def __init__(self, dataSamples, dataFeatures, dataMap, mutationMap, gPathway, paradigmDir, 
-                 paramMap, directory):
+                 paramMap, foldMap, directory):
         Target.__init__(self, time=10000)
         self.dataSamples = dataSamples
         self.dataFeatures = dataFeatures
@@ -234,6 +228,7 @@ class branchGenes(Target):
         self.gPathway = gPathway
         self.paradigmDir = paradigmDir
         self.paramMap = paramMap
+        self.foldMap = foldMap
         self.directory = directory
     def run(self):
         os.chdir(self.directory)
@@ -249,13 +244,13 @@ class branchGenes(Target):
                 self.addChildTarget(branchFolds(mutatedGene, self.mutationMap[mutatedGene], 
                                             self.dataSamples, self.dataFeatures, self.dataMap, 
                                             self.gPathway, self.paradigmDir, self.paramMap, 
-											self.directory))
+											self.foldMap, self.directory))
         if os.path.exists(htmlDir):
             self.setFollowOnTarget(pshiftReport(htmlFeatures, "%s/%s" % (htmlDir, self.paramMap["cohortName"]), self.directory))
 
 class branchFolds(Target):
     def __init__(self, mutatedGene, mutatedSamples, dataSamples, dataFeatures, dataMap, gPathway, 
-                 paradigmDir, paramMap, directory):
+                 paradigmDir, paramMap, foldMap, directory):
         Target.__init__(self, time=10000)
         self.mutatedGene = mutatedGene
         self.mutatedSamples = mutatedSamples
@@ -265,6 +260,7 @@ class branchFolds(Target):
         self.gPathway = gPathway
         self.paradigmDir = paradigmDir
         self.paramMap = paramMap
+        self.foldMap = foldMap
         self.directory = directory
     def run(self):
         shiftDir = "%s/analysis/%s" % (self.directory, self.mutatedGene)
@@ -291,23 +287,28 @@ class branchFolds(Target):
         
         ## pick samples
         system("echo Branching Folds and Params... >> progress.log")
-        mutSamples = self.mutatedSamples
-        nonSamples = list(set(self.dataSamples) - set(self.mutatedSamples))
-        foldSamples = {}
-        for r in range(1, rRepeats+1):
-            foldSamples[r] = {}
-            for f in range(1, mFolds+1):
-                foldSamples[r][f] = []
-            select_mutSamples = deepcopy(mutSamples)
-            select_nonSamples = deepcopy(nonSamples)
-            while len(select_mutSamples)+len(select_nonSamples) > 0:
+        rRepeats = len(self.foldMap.keys())
+        mFolds = len(self.foldMap[1].keys())
+        if self.foldMap[1][1] is None:
+            mutSamples = self.mutatedSamples
+            nonSamples = list(set(self.dataSamples) - set(self.mutatedSamples))
+            foldSamples = {}
+            for r in range(1, rRepeats+1):
+                foldSamples[r] = {}
                 for f in range(1, mFolds+1):
-                    if len(select_mutSamples) > 0:
-                        foldSamples[r][f].append(select_mutSamples.pop(random.randint(0, 
-                                                                       len(select_mutSamples)-1)))
-                    elif len(select_nonSamples) > 0:
-                        foldSamples[r][f].append(select_nonSamples.pop(random.randint(0, 
-                                                                       len(select_nonSamples)-1)))
+                    foldSamples[r][f] = []
+                select_mutSamples = deepcopy(mutSamples)
+                select_nonSamples = deepcopy(nonSamples)
+                while len(select_mutSamples)+len(select_nonSamples) > 0:
+                    for f in range(1, mFolds+1):
+                        if len(select_mutSamples) > 0:
+                            foldSamples[r][f].append(select_mutSamples.pop(random.randint(0, 
+                                                                           len(select_mutSamples)-1)))
+                        elif len(select_nonSamples) > 0:
+                            foldSamples[r][f].append(select_nonSamples.pop(random.randint(0, 
+                                                                           len(select_nonSamples)-1)))
+        else:
+            foldSamples = deepcopy(self.foldMap)
         
         ## branch folds
         for r in range(1, rRepeats+1):
@@ -317,17 +318,18 @@ class branchFolds(Target):
                 self.addChildTarget(branchParams(fold, self.mutatedGene, self.mutatedSamples, 
                                                  self.dataSamples, foldSamples[r][f], 
                                                  self.dataFeatures, self.dataMap, self.gPathway,
-                                                 self.paradigmDir, self.paramMap, self.directory))
+                                                 self.paradigmDir, self.paramMap, self.foldMap, 
+                                                 self.directory))
         
         ## run final
         self.setFollowOnTarget(branchParams(0, self.mutatedGene, self.mutatedSamples, 
                                             self.dataSamples, self.dataSamples, self.dataFeatures, 
                                             self.dataMap, self.gPathway, self.paradigmDir, 
-                                            self.paramMap, self.directory))
+                                            self.paramMap, self.foldMap, self.directory))
 
 class branchParams(Target):
     def __init__(self, fold, mutatedGene, mutatedSamples, dataSamples, trainSamples, dataFeatures, 
-                 dataMap, gPathway, paradigmDir, paramMap, directory):
+                 dataMap, gPathway, paradigmDir, paramMap, foldMap, directory):
         Target.__init__(self, time=10000)
         self.fold = fold
         self.mutatedGene = mutatedGene
@@ -339,6 +341,7 @@ class branchParams(Target):
         self.gPathway = gPathway
         self.paradigmDir = paradigmDir
         self.paramMap = paramMap
+        self.foldMap = foldMap
         self.directory = directory
     def run(self):
         if self.fold == 0:
@@ -350,6 +353,8 @@ class branchParams(Target):
             os.chdir(shiftDir)
         
         ## average cross validation aucs for final run
+        rRepeats = len(self.foldMap.keys())
+        mFolds = len(self.foldMap[1].keys())
         if self.fold == 0:
             aucList = []
             aucLines = []
@@ -771,9 +776,9 @@ def main():
     ## paramMap
     paramMap = {}
     paramMap["dist"] = [2]
-    paramMap["thresh"] = [0.3]
-    paramMap["inc"] = [0.0]
-    paramMap["method"] = ["vsMax"]
+    paramMap["thresh"] = [0.68]
+    paramMap["inc"] = [0.01]
+    paramMap["method"] = ["vsNon"]
     paramMap["stat"] = "tt"
     if os.path.exists("mut.cfg"):
         f = open("mut.cfg", "r")
@@ -796,6 +801,28 @@ def main():
         f.close()
     if "cohortName" not in paramMap:
         paramMap["cohortName"] = re.split("/", os.getcwd())[-1]
+    
+    ## foldMap
+    rRepeats = 1
+    mFolds = 5
+    foldMap = {}
+    if os.path.exists("fold.map"):
+        (mapData, mapSamples, mapRepeats) = rCRSData("fold.map", retFeatures = True)
+        for r, row in enumerate(mapRepeats):
+            foldMap[r+1] = {}
+            for col in mapSamples:
+                mFolds = max(mFolds, int(mapData[col][row]))
+            for m in range(mFolds):
+                foldMap[r+1][m+1] = []
+            for col in mapSamples:
+                foldMap[r+1][int(mapData[col][row])].append(col)
+            if (r+1) == rRepeats:
+                break
+    else:
+        for r in range(1, rRepeats+1):
+            foldMap[r] = {}
+            for m in range(1, mFolds+1):
+                foldMap[r][m] = None
     
     ## check files
     pathwayFile = None
@@ -871,7 +898,7 @@ def main():
     writeScripts()
     
     s = Stack(branchGenes(dataSamples, dataFeatures, dataMap, submitMap, gPathway, paradigmDir, 
-              paramMap, os.getcwd()))
+              paramMap, foldMap, os.getcwd()))
     if options.jobFile:
         s.addToJobFile(options.jobFile)
     else:
