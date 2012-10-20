@@ -649,6 +649,55 @@ def rPARADIGM(inf, delim = "\t", useRows = None):
     f.close()
     return(inLikelihood, inScore)
 
+def rMAF(inf, delim = "\t"):
+    """read .maf format file"""
+    truncList = ["Frame_Shift_Del", "Frame_Shift_Ins", "In_Frame_Del", "In_Frame_Ins", 
+                 "Nonsense_Mutation", "Splice_Site"]
+    missList = ["Missense_Mutation"]
+    silentList = ["Silent"]
+    mutData = {}
+    mutClass = {}
+    f = openAnyFile(inf)
+    line = f.readline()
+    if line.isspace():
+        log("ERROR: encountered a blank on line 1\n", die = True)
+    line = line.rstrip("\r\n")
+    pline = re.split(delim, line)
+    hugoCol = -1
+    tumorCol = -1
+    classCol = -1
+    for i, j in enumerate(pline):
+        if j == "Hugo_Symbol":
+            hugoCol = i
+        elif j == "Tumor_Sample_Barcode":
+            tumorCol = i
+        elif j == "Variant_Classification":
+            classCol = i
+    samples = []
+    for line in f:
+        if line.isspace():
+            continue
+        line = line.rstrip("\t\r\n")
+        pline = re.split(delim, line)
+        if pline[hugoCol] not in mutData:
+            mutData[pline[hugoCol]] = []
+            mutClass[pline[hugoCol]] = {"truncating" : [], "silent" : [], "missense" : [],
+                                        "other" : []}
+        mutData[pline[hugoCol]].append(pline[tumorCol])
+        if classCol != -1:
+            if pline[classCol] in truncList:
+                mutClass[pline[hugoCol]]["truncating"].append(pline[tumorCol])
+            elif pline[classCol] in silentList:
+                mutClass[pline[hugoCol]]["silent"].append(pline[tumorCol])
+            elif pline[classCol] in missList:
+                mutClass[pline[hugoCol]]["missense"].append(pline[tumorCol])
+            else:
+                mutClass[pline[hugoCol]]["other"].append(pline[tumorCol])
+        if pline[tumorCol] not in samples:
+            samples.append(pline[tumorCol])
+    f.close()
+    return(mutData, mutClass, samples)
+
 def floatList(inList):
     """returns only numeric elements of a list"""
     outList = []
