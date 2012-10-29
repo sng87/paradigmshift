@@ -1035,13 +1035,13 @@ def selectMutationNeighborhood(focusGene, mutSamples, dataFile, gPathway, trainS
     for node in frontierDown:
         if ((count < 4) and (nodeScore[node] > 0)) or (nodeScore[node] > tThresh):
             addPaths = shortestPath(focusGene, node, gPathway.interactions)
-			## require at least 1 terminal transciption
-			hasTranscriptional = False
-			for currPath in addPaths:
-				if gPathway.interactions[currPath[-2]][currPath[-1]].startswith("-t")
-					hasTranscriptional = True
-			if not hasTranscriptional:
-				continue
+            ## require at least 1 terminal transciption
+            hasTranscriptional = False
+            for currPath in addPaths:
+                if gPathway.interactions[currPath[-2]][currPath[-1]].startswith("-t"):
+                    hasTranscriptional = True
+            if not hasTranscriptional:
+                continue
             for currPath in addPaths:
                 for addNode in currPath:
                     if addNode in downPathway.nodes:
