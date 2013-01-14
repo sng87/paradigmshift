@@ -244,7 +244,7 @@ class branchGenes(Target):
                 self.addChildTarget(branchFolds(mutatedGene, self.mutationMap[mutatedGene], 
                                             self.dataSamples, self.dataFeatures, self.dataMap, 
                                             self.gPathway, self.paradigmDir, self.paramMap, 
-											self.foldMap, self.directory))
+                                            self.foldMap, self.directory))
         if os.path.exists(htmlDir):
             self.setFollowOnTarget(pshiftReport(htmlFeatures, "%s/%s" % (htmlDir, self.paramMap["cohortName"]), self.directory))
 
@@ -443,6 +443,8 @@ class prepareNeighborhood(Target):
                                                                   tIncrement = self.iParam, 
                                                                   maxDistance = self.dParam, 
                                                                   method = self.method)
+        wPathway("upstream_pathway.tab", uPathway.nodes, uPathway.interactions)
+        wPathway("downstream_pathway.tab", dPathway.nodes, dPathway.interactions)
         
         ## check thresholds
         if not isPass:
@@ -454,7 +456,7 @@ class prepareNeighborhood(Target):
             if useGreedy:
                 self.setFollowOnTarget(runGreedy(self.fold, self.mutatedGene, self.mutatedSamples, 
                                                  self.dataSamples, self.trainSamples, uPathway, 
-                                                 dPathway, shiftDir))
+                                                 dPathway, self.directory, shiftDir))
             else:
                 if self.fold == 0:
                     dataPath = "../"
@@ -466,7 +468,7 @@ class prepareNeighborhood(Target):
 
 class runGreedy(Target):
     def __init__(self, fold, mutatedGene, mutatedSamples, dataSamples, trainSamples, uPathway, 
-                 dPathway, directory):
+                 dPathway, root, directory):
         Target.__init__(self, time=10000)
         self.fold = fold
         self.mutatedGene = mutatedGene
@@ -475,12 +477,46 @@ class runGreedy(Target):
         self.trainSamples = trainSamples
         self.uPathway = uPathway
         self.dPathway = dPathway
+        self.root = root
         self.directory = directory
     def run(self):
         os.chdir(self.directory)
         
+        ## assert links.tab exists
+        assert os.path.exists("%s/links.tab" % (self.root))
+        (lNodes, lInteractions) = rPathway("%s/links.tab" % (self.root))
+        lPathway = Pathway(lNodes, lInteractions)
+        
+        ## determine possible additions
+        upstreamAdditions = []
+        downstreamAdditions = []
+        for source in lInteractions.keys():
+            for target in lInteractions[source].keys():
+                if target in self.uPathway.nodes:
+                    if lInteractions[source][target].startswith("-a"):
+                        if source in self.uPathway.interactions:
+                            if target not in self.uPathway.interactions[source]:
+                                upstreamAdditions.append( (source, target, lInteractions[source][target]) )
+                        else:
+                            upstreamAdditions.append( (source, target, lInteractions[source][target]) )
+                ### update this to include downstream chains
+                if source in self.dPathway.nodes:
+                    if lInteractions[source][target].startswith("-t"):
+                        if source in self.dPathway.interactions:
+                            if target not in self.uPathway.interactions[source]:
+                                downstreamAdditions.append( (source, target, lInteractions[source][target]) )
+                        else:
+                            downstreamAdditions.append( (source, target, lInteractions[source][target]) )
+        additionMap = {}
+        for index in range(upstreamAdditions):
+            additionMap["u%s" % (index)] = upstreamAdditions[index]
+        for index in range(downstreamAdditions):
+            additionMap["d%s" % (index)] = downstreamAdditions[index]
+        
         ## get baseline PARADIGM-SHIFT auc
         system("mkdir iter_0")
+        wPathway("iter_0/upstream_pathway.tab", self.uPathway.nodes, self.uPathway.interactions)
+        wPathway("iter_0/downstream_pathway.tab", self.dPathway.nodes, self.dPathway.interactions)
         system("cp config.txt iter_0/config.txt")
         system("cp params.txt iter_0/params.txt")
         for file in os.listdir("."):
@@ -488,7 +524,6 @@ class runGreedy(Target):
                 system("cp %s iter_0/%s" % (file, file))
             elif file.endswith(".dogma"):
                 system("cp %s iter_0/%s" % (file, file))
-        os.chdir("..")
         if self.fold == 0:
             dataPath = "../../"
         else:
@@ -498,11 +533,11 @@ class runGreedy(Target):
                                         self.dPathway, dataPath, "%s/iter_0" % (self.directory)))
         self.setFollowOnTarget(greedyBranchSearch(self.fold, self.mutatedGene, self.mutatedSamples, 
                                         self.dataSamples, self.trainSamples, self.uPathway, 
-                                        self.dPathway, self.directory))
+                                        self.dPathway, 1, 5, [], additionMap, lPathway, self.directory))
         
 class greedyBranchSearch(Target):
     def __init__(self, fold, mutatedGene, mutatedSamples, dataSamples, trainSamples, uPathway, 
-                 dPathway, directory):
+                 dPathway, iter, maxiter, additions, additionMap, links, directory):
         Target.__init__(self, time=10000)
         self.fold = fold
         self.mutatedGene = mutatedGene
@@ -511,19 +546,87 @@ class greedyBranchSearch(Target):
         self.trainSamples = trainSamples
         self.uPathway = uPathway
         self.dPathway = dPathway
+        self.iter = iter
+        self.maxiter = maxiter
+        self.additions = additions
+        self.additionMap = additionMap
+        self.links = links
         self.directory = directory
     def run(self):
         os.chdir(self.directory)
         
-        ## spin off new iter and compute additions
+        ## get current base
+        baseUp = deepcopy(self.uPathway)
+        baseDown = deepcopy(self.dPathway)
+        for addition in self.additions:
+            ### update this to include chains
+            if addition.startswith("u"):
+                if self.additionMap[addition][0] not in baseUp.nodes:
+                    baseUp.nodes[self.additionMap[addition][0]] = self.links.nodes[self.additionMap[addition][0]]
+                if self.additionMap[addition][1] not in baseUp.nodes:
+                    baseUp.nodes[self.additionMap[addition][1]] = self.links.nodes[self.additionMap[addition][1]]
+                if self.additionMap[addition][0] not in baseUp.interactions:
+                    baseUp.interactions[self.additionMap[addition][0]] = {}
+                baseUp.interactions[self.additionMap[addition][0]][self.additionMap[addition][1]] = self.additionMap[addition][2]
+            else:
+                if self.additionMap[addition][0] not in baseDown.nodes:
+                    baseDown.nodes[self.additionMap[addition][0]] = self.links.nodes[self.additionMap[addition][0]]
+                if self.additionMap[addition][1] not in baseDown.nodes:
+                    baseDown.nodes[self.additionMap[addition][1]] = self.links.nodes[self.additionMap[addition][1]]
+                if self.additionMap[addition][0] not in baseDown.interactions:
+                    baseDown.interactions[self.additionMap[addition][0]] = {}
+                baseDown.interactions[self.additionMap[addition][0]][self.additionMap[addition][1]] = self.additionMap[addition][2]
         
-        ## consider all node additions
-            ## addChildTargets
-        ## setFollowOn            
+        ## for each addition
+        for addition in self.additionMap.keys():
+            if addition in self.additions:
+                continue
+            currentUp = deepcopy(baseUp)
+            currentDown = deepcopy(baseDown)
+            ### update this to include chains
+            if addition.startswith("u"):
+                if self.additionMap[addition][0] not in currentUp.nodes:
+                    currentUp.nodes[self.additionMap[addition][0]] = self.links.nodes[self.additionMap[addition][0]]
+                if self.additionMap[addition][1] not in currentUp.nodes:
+                    currentUp.nodes[self.additionMap[addition][1]] = self.links.nodes[self.additionMap[addition][1]]
+                if self.additionMap[addition][0] not in currentUp.interactions:
+                    currentUp.interactions[self.additionMap[addition][0]] = {}
+                currentUp.interactions[self.additionMap[addition][0]][self.additionMap[addition][1]] = self.additionMap[addition][2]
+            else:
+                if self.additionMap[addition][0] not in currentDown.nodes:
+                    currentDown.nodes[self.additionMap[addition][0]] = self.links.nodes[self.additionMap[addition][0]]
+                if self.additionMap[addition][1] not in currentDown.nodes:
+                    currentDown.nodes[self.additionMap[addition][1]] = self.links.nodes[self.additionMap[addition][1]]
+                if self.additionMap[addition][0] not in currentDown.interactions:
+                    currentDown.interactions[self.additionMap[addition][0]] = {}
+                currentDown.interactions[self.additionMap[addition][0]][self.additionMap[addition][1]] = self.additionMap[addition][2]
+            system("mkdir iter_%s-%s" % (self.iter, addition))
+            wPathway("iter_%s-%s/upstream_pathway.tab" % (self.iter, addition), currentUp.nodes, currentUp.interactions)
+            wPathway("iter_%s-%s/downstream_pathway.tab" % (self.iter, addition), currentDown.nodes, currentDown.interactions)
+            system("cp config.txt iter_%s-%s/config.txt" % (self.iter, addition))
+            system("cp params.txt iter_%s-%s/params.txt" % (self.iter, addition))
+            for file in os.listdir("."):
+                if file.endswith(".imap"):
+                    system("cp %s iter_%s-%s/%s" % (file, self.iter, addition, file))
+                elif file.endswith(".dogma"):
+                    system("cp %s iter_%s-%s/%s" % (file, self.iter, addition, file))
+            if self.fold == 0:
+                dataPath = "../../"
+            else:
+                dataPath = "../../../"
+            self.addChildTarget(runPARADIGM(self.fold, self.mutatedGene, self.mutatedSamples, 
+                                            self.dataSamples, self.trainSamples, self.uPathway, 
+                                            self.dPathway, dataPath, 
+                                            "%s/iter_%s-%s" % (self.directory, self.iter, addition)))
+        self.setFollowOnTarget(greedySelectOptimum(self.fold, self.mutatedGene, self.mutatedSamples, 
+                                                   self.dataSamples, self.trainSamples, 
+                                                   self.uPathway, self.dPathway, self.iter, 
+                                                   self.maxiter, self.additions, self.additionMap,
+                                                   self.links, self.directory))      
             
 class greedySelectOptimum(Target):
     def __init__(self, fold, mutatedGene, mutatedSamples, dataSamples, trainSamples, uPathway, 
-                 dPathway, directory):
+                 dPathway, iter, maxiter, additions, additionMap, links, directory):
         Target.__init__(self, time=10000)
         self.fold = fold
         self.mutatedGene = mutatedGene
@@ -532,19 +635,55 @@ class greedySelectOptimum(Target):
         self.trainSamples = trainSamples
         self.uPathway = uPathway
         self.dPathway = dPathway
+        self.iter = iter
+        self.maxiter = maxiter
+        self.additions = additions
+        self.additionMap = additionMap
+        self.links = links
         self.directory = directory
     def run(self):
         os.chdir(self.directory)
         
-        ## pick best positive, if none break
-        if max(auc_tr_diff) > 0.0:
-            ## store new best
-            
-            ## set new pathway as base
-            
-            ## addFollow
-            pass
-        
+        aucDiffs = {}
+        f = open("iter_%s/auc.stat" % (self.iter-1), "r")
+        lastAUC = float(f.readline().rstrip("\r\n").split("\t")[0])
+        f.close()
+        for addition in self.additionMap.keys():
+            if os.path.exists("iter_%s-%s/auc.stat" % (self.iter, addition)):
+                f = open("iter_%s-%s/auc.stat" % (self.iter, addition), "r")
+                currentAUC = float(f.readline().rstrip("\r\n").split("\t")[0])
+                f.close()
+                aucDiffs[addition] = currentAUC - lastAUC
+        rankedAdditions = aucDiffs.keys()
+        rankedAdditions.sort(lambda x, y: cmp(aucDiffs[y], aucDiffs[x]))
+        if aucDiffs[rankedAdditions[0]] > 0.0:
+            updatedAdditions = deepcopy(self.additions)
+            updatedAdditions.append(rankedAdditions[0])
+            system("ln -s iter_%s-%s iter_%s" % (self.iter, rankedAdditions[0], self.iter))
+            if self.iter < self.maxiter:
+                self.setFollowOnTarget(greedyBranchSearch(self.fold, self.mutatedGene, 
+                                                          self.mutatedSamples, self.dataSamples, 
+                                                          self.trainSamples, self.uPathway, 
+                                                          self.dPathway, self.iter+1, self.maxiter, 
+                                                          updatedAdditions, self.additionMap, 
+                                                          self.links, self.directory))
+            else:
+                for file in ["shift.tab", "include.samples", "up.features", "down.features", 
+                             "mut.features", "mut.circle", "shift.circle", "pshift.train.tab",
+                             "mut.train.scores", "non.train.scores", "pshift.test.tab",
+                             "mut.test.scores", "non.test.scores", "auc.stat", "real.scores",
+                             "null.scores", "sig.tab"]:
+                    if os.path.exists("iter_%s/%s" % (self.iter, file)):
+                        system("cp iter_%s/%s %s" % (self.iter, file, file))        
+        else:
+            for file in ["shift.tab", "include.samples", "up.features", "down.features", 
+                         "mut.features", "mut.circle", "shift.circle", "pshift.train.tab",
+                         "mut.train.scores", "non.train.scores", "pshift.test.tab",
+                         "mut.test.scores", "non.test.scores", "auc.stat", "real.scores",
+                         "null.scores", "sig.tab"]:
+                if os.path.exists("iter_%s/%s" % (self.iter-1, file)):
+                    system("cp iter_%s/%s %s" % (self.iter-1, file, file))
+
 class runPARADIGM(Target):
     def __init__(self, fold, mutatedGene, mutatedSamples, dataSamples, trainSamples, uPathway, 
                  dPathway, dataPath, directory):
@@ -785,7 +924,7 @@ def main():
         for line in f:
             if line.isspace():
                 continue
-            pline = re.split("\t", line.rstrip("\n"))
+            pline = re.split("\t", line.rstrip("\r\n"))
             if line.startswith("distanceParams"):
                 paramMap["dist"] = [int(i) for i in re.split(",", pline[1])]
             elif line.startswith("tstatParams"):

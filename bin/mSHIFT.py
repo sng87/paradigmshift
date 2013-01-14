@@ -651,10 +651,6 @@ def rPARADIGM(inf, delim = "\t", useRows = None):
 
 def rMAF(inf, delim = "\t"):
     """read .maf format file"""
-    truncList = ["Frame_Shift_Del", "Frame_Shift_Ins", "In_Frame_Del", "In_Frame_Ins", 
-                 "Nonsense_Mutation", "Splice_Site"]
-    missList = ["Missense_Mutation"]
-    silentList = ["Silent"]
     mutData = {}
     mutClass = {}
     f = open(inf, "r")
@@ -681,18 +677,12 @@ def rMAF(inf, delim = "\t"):
         pline = re.split(delim, line)
         if pline[hugoCol] not in mutData:
             mutData[pline[hugoCol]] = []
-            mutClass[pline[hugoCol]] = {"truncating" : [], "silent" : [], "missense" : [],
-                                        "other" : []}
+            mutClass[pline[hugoCol]] = {}
         mutData[pline[hugoCol]].append(pline[tumorCol])
         if classCol != -1:
-            if pline[classCol] in truncList:
-                mutClass[pline[hugoCol]]["truncating"].append(pline[tumorCol])
-            elif pline[classCol] in silentList:
-                mutClass[pline[hugoCol]]["silent"].append(pline[tumorCol])
-            elif pline[classCol] in missList:
-                mutClass[pline[hugoCol]]["missense"].append(pline[tumorCol])
-            else:
-                mutClass[pline[hugoCol]]["other"].append(pline[tumorCol])
+            if pline[classCol] not in mutClass[pline[hugoCol]]:
+                mutClass[pline[hugoCol]][pline[classCol]] = []
+            mutClass[pline[hugoCol]][pline[classCol]].append(pline[tumorCol])
         if pline[tumorCol] not in samples:
             samples.append(pline[tumorCol])
     f.close()
@@ -1064,10 +1054,6 @@ def selectMutationNeighborhood(focusGene, mutSamples, dataFile, gPathway, trainS
                                 downPathway.interactions[addNode][target] = gPathway.interactions[addNode][target] 
     if count >= 4:
         hasDownstream = True
-    
-    ## output pathway
-    wPathway("upstream_pathway.tab", upPathway.nodes, upPathway.interactions)
-    wPathway("downstream_pathway.tab", downPathway.nodes, downPathway.interactions)
     return(upPathway, downPathway, hasUpstream and hasDownstream)
 
 def selectMutationNeighborhood_previous(focusGene, mutSamples, dataFile, gPathway, trainSamples = None, tCutoff = 2.0, tIncrement = 0.5 , maxDistance = 2, method = "vsZero", penalty = 0.5):
@@ -1266,28 +1252,6 @@ def selectMutationNeighborhood_previous(focusGene, mutSamples, dataFile, gPathwa
 
 def shiftCV(mutatedGene, mutatedSamples, dataSamples, trainSamples, uPathway, dPathway, 
             nNulls = 10, msepMethod = "tt", alpha = 0.05, mutsigFile = None):
-    ## read paradigm output
-    upScore = rPARADIGM("%s_upstream.fa" % (mutatedGene), useRows = uPathway.nodes.keys())[1]
-    downScore = rPARADIGM("%s_downstream.fa" % (mutatedGene), useRows = dPathway.nodes.keys())[1]
-    wCRSData("paradigm_up.tab", upScore)
-    wCRSData("paradigm_down.tab", downScore)
-    n_upScore = {}
-    n_downScore = {}
-    for null in range(1, nNulls+1):
-        n_upScore[null] = rPARADIGM("N%s_%s_upstream.fa" % (null, mutatedGene), useRows = [mutatedGene])[1]
-        n_downScore[null] = rPARADIGM("N%s_%s_downstream.fa" % (null, mutatedGene), useRows = [mutatedGene])[1]
-    f = open("up.features", "w")
-    for feature in (set(upScore[upScore.keys()[0]].keys()) - set([mutatedGene])):
-        f.write("%s\n" % (feature))
-    f.close()
-    f = open("down.features", "w")
-    for feature in (set(downScore[downScore.keys()[0]].keys()) - set([mutatedGene])):
-        f.write("%s\n" % (feature))
-    f.close()
-    f = open("mut.features", "w")
-    f.write("%s\n" % (mutatedGene))
-    f.close()
-    
     ## define sample groups
     trainGroup = trainSamples
     testGroup = list(set(dataSamples) - set(trainSamples))
@@ -1304,9 +1268,51 @@ def shiftCV(mutatedGene, mutatedSamples, dataSamples, trainSamples, uPathway, dP
     for sample in mutGroup:
         for null in range(1, nNulls+1):
             backGroup.append("null%s_%s" % (null, sample))
+    
+    ## read paradigm output
+    upScore = rPARADIGM("%s_upstream.fa" % (mutatedGene), useRows = uPathway.nodes.keys())[1]
+    downScore = rPARADIGM("%s_downstream.fa" % (mutatedGene), useRows = dPathway.nodes.keys())[1]
+    wCRSData("paradigm_up.tab", upScore)
+    wCRSData("paradigm_down.tab", downScore)
+    n_upScore = {}
+    n_downScore = {}
+    for null in range(1, nNulls+1):
+        if os.path.exists("N%s_%s_upstream.fa" % (null, mutatedGene)):
+            n_upScore[null] = rPARADIGM("N%s_%s_upstream.fa" % (null, mutatedGene), useRows = [mutatedGene])[1]
+        if os.path.exists("N%s_%s_downstream.fa" % (null, mutatedGene)):
+            n_downScore[null] = rPARADIGM("N%s_%s_downstream.fa" % (null, mutatedGene), useRows = [mutatedGene])[1]
+    
+    ## score shifts
+    shiftScore = {}
+    for sample in (mutGroup + nonGroup + permGroup):
+        shiftScore[sample] = downScore[sample][mutatedGene] - upScore[sample][mutatedGene]
+    for sample in (mutGroup + nonGroup + permGroup):
+        for null in range(1, nNulls+1):
+            shiftScore["null%s_%s" % (null, sample)] = n_downScore[null][sample][mutatedGene] - n_upScore[null][sample][mutatedGene]
+    
+    ## output scores if just applying model
+    if len(trainSamples) == 0:
+        f = open("shift.tab", "w")
+        for sample in dataSamples:
+            f.write("%s\t%s\n" % (sample, shiftScore[sample]))
+        f.close()
+        return
+    
+    ## output files for circle maps
     f = open("include.samples", "w")
     for sample in (mutGroup_tr + nonGroup_tr):
         f.write("%s\n" % (sample))
+    f.close()
+    f = open("up.features", "w")
+    for feature in (set(upScore[upScore.keys()[0]].keys()) - set([mutatedGene])):
+        f.write("%s\n" % (feature))
+    f.close()
+    f = open("down.features", "w")
+    for feature in (set(downScore[downScore.keys()[0]].keys()) - set([mutatedGene])):
+        f.write("%s\n" % (feature))
+    f.close()
+    f = open("mut.features", "w")
+    f.write("%s\n" % (mutatedGene))
     f.close()
     f = open("mut.circle", "w")
     f.write("id\t%s\n" % ("\t".join(mutGroup_tr + nonGroup_tr + permGroup_tr)))
@@ -1320,14 +1326,6 @@ def shiftCV(mutatedGene, mutatedSamples, dataSamples, trainSamples, uPathway, dP
             f.write("\t0.5")
     f.write("\n")
     f.close()
-    
-    ## score shifts      
-    shiftScore = {}
-    for sample in (mutGroup + nonGroup + permGroup):
-        shiftScore[sample] = downScore[sample][mutatedGene] - upScore[sample][mutatedGene]
-    for sample in (mutGroup + nonGroup + permGroup):
-        for null in range(1, nNulls+1):
-            shiftScore["null%s_%s" % (null, sample)] = n_downScore[null][sample][mutatedGene] - n_upScore[null][sample][mutatedGene]   
     f = open("shift.circle", "w")
     f.write("id\t%s\n" % ("\t".join(mutGroup_tr + nonGroup_tr + permGroup_tr)))
     f.write("*")
