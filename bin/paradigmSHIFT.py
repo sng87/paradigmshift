@@ -34,9 +34,9 @@ htmlDir = "/inside/grotto/users/sng/.html"
 paradigmPublic = False            ## Use public binary (does not support sample splitting)
 useGreedy = False                 ## Use greedy network search (not implemented)
 useFlattened = True               ## Flattens complexes to prevent long complex chains
-maxFeatures = 10                  ## Maximum number of features to in PARADIGM Shift run
+maxFeatures = 15                  ## Maximum number of features to in PARADIGM Shift run
 mutationThreshold = 5             ## Minimum mutations in cohort needed to consider a gene
-nNulls = 30                       ## Number of nulls to run for background model
+nNulls = 100                      ## Number of nulls to run for background model
 
 def writeScripts():
     """creates the R scripts necessary for plotting"""
@@ -310,16 +310,17 @@ class branchFolds(Target):
         else:
             foldSamples = deepcopy(self.foldMap)
         
-        ## branch folds
-        for r in range(1, rRepeats+1):
-            for f in range(1, mFolds+1):
-                fold = (r-1)*mFolds+f
-                system("mkdir fold%s" % (fold))
-                self.addChildTarget(branchParams(fold, self.mutatedGene, self.mutatedSamples, 
-                                                 self.dataSamples, foldSamples[r][f], 
-                                                 self.dataFeatures, self.dataMap, self.gPathway,
-                                                 self.paradigmDir, self.paramMap, self.foldMap, 
-                                                 self.directory))
+        ## branch folds ###
+        if self.paramMap["crossVal"] == "1":
+            for r in range(1, rRepeats+1):
+                for f in range(1, mFolds+1):
+                    fold = (r-1)*mFolds+f
+                    system("mkdir fold%s" % (fold))
+                    self.addChildTarget(branchParams(fold, self.mutatedGene, self.mutatedSamples, 
+                                                     self.dataSamples, foldSamples[r][f], 
+                                                     self.dataFeatures, self.dataMap, self.gPathway,
+                                                     self.paradigmDir, self.paramMap, self.foldMap, 
+                                                     self.directory))
         
         ## run final
         self.setFollowOnTarget(branchParams(0, self.mutatedGene, self.mutatedSamples, 
@@ -361,10 +362,13 @@ class branchParams(Target):
             for r in range(1, rRepeats+1):
                 for f in range(1, mFolds+1):
                     fold = (r-1)*mFolds+f
-                    f = open("fold%s/auc.stat" % (fold), "r")
-                    line = f.readline()
-                    f.close()
-                    (auc_tr, auc_te, mparams) = re.split("\t", line.rstrip("\r\n"))
+                    if os.path.exists("fold%s/auc.stat" % (fold)):
+                        f = open("fold%s/auc.stat" % (fold), "r")
+                        line = f.readline()
+                        f.close()
+                        (auc_tr, auc_te, mparams) = re.split("\t", line.rstrip("\r\n"))
+                    else:
+                        (auc_tr, auc_te, mparams) = ("NA", "NA", "NA")
                     aucList.append(auc_te)
                     aucLines.append("%s\t%s\t%s\t%s\n" % (fold, auc_tr, auc_te, mparams))
             o = open("avgAUC.tab", "w")
@@ -503,15 +507,19 @@ class runGreedy(Target):
                 if source in self.dPathway.nodes:
                     if lInteractions[source][target].startswith("-t"):
                         if source in self.dPathway.interactions:
-                            if target not in self.uPathway.interactions[source]:
+                            if target not in self.dPathway.interactions[source]:
                                 downstreamAdditions.append( (source, target, lInteractions[source][target]) )
                         else:
                             downstreamAdditions.append( (source, target, lInteractions[source][target]) )
         additionMap = {}
-        for index in range(upstreamAdditions):
-            additionMap["u%s" % (index)] = upstreamAdditions[index]
-        for index in range(downstreamAdditions):
-            additionMap["d%s" % (index)] = downstreamAdditions[index]
+        for index, addition in enumerate(upstreamAdditions):
+            if index > 25: ###
+                break
+            additionMap["u%s" % (index)] = addition
+        for index, addition in enumerate(downstreamAdditions):
+            if index > 25: ###
+                break
+            additionMap["d%s" % (index)] = addition
         
         ## get baseline PARADIGM-SHIFT auc
         system("mkdir iter_0")
@@ -615,8 +623,8 @@ class greedyBranchSearch(Target):
             else:
                 dataPath = "../../../"
             self.addChildTarget(runPARADIGM(self.fold, self.mutatedGene, self.mutatedSamples, 
-                                            self.dataSamples, self.trainSamples, self.uPathway, 
-                                            self.dPathway, dataPath, 
+                                            self.dataSamples, self.trainSamples, currentUp, 
+                                            currentDown, dataPath, 
                                             "%s/iter_%s-%s" % (self.directory, self.iter, addition)))
         self.setFollowOnTarget(greedySelectOptimum(self.fold, self.mutatedGene, self.mutatedSamples, 
                                                    self.dataSamples, self.trainSamples, 
@@ -656,33 +664,53 @@ class greedySelectOptimum(Target):
                 aucDiffs[addition] = currentAUC - lastAUC
         rankedAdditions = aucDiffs.keys()
         rankedAdditions.sort(lambda x, y: cmp(aucDiffs[y], aucDiffs[x]))
-        if aucDiffs[rankedAdditions[0]] > 0.0:
+        if len(rankedAdditions) == 0:
+            for file in ["shift.tab", "include.samples", "up.features", "down.features", 
+                         "mut.features", "mut.circle", "shift.circle", "pshift.train.tab",
+                         "mut.train.scores", "non.train.scores", "pshift.test.tab",
+                         "mut.test.scores", "non.test.scores", "auc.stat", "real.scores",
+                         "null.scores", "sig.tab", "paradigm_up.tab", "paradigm_down.tab"]:
+                if os.path.exists("iter_%s/%s" % (self.iter-1, file)):
+                    system("cp iter_%s/%s %s" % (self.iter-1, file, file))
+        elif aucDiffs[rankedAdditions[0]] <= 0.0:
+            for file in ["shift.tab", "include.samples", "up.features", "down.features", 
+                         "mut.features", "mut.circle", "shift.circle", "pshift.train.tab",
+                         "mut.train.scores", "non.train.scores", "pshift.test.tab",
+                         "mut.test.scores", "non.test.scores", "auc.stat", "real.scores",
+                         "null.scores", "sig.tab", "paradigm_up.tab", "paradigm_down.tab"]:
+                if os.path.exists("iter_%s/%s" % (self.iter-1, file)):
+                    system("cp iter_%s/%s %s" % (self.iter-1, file, file))        
+        else:
             updatedAdditions = deepcopy(self.additions)
             updatedAdditions.append(rankedAdditions[0])
             system("ln -s iter_%s-%s iter_%s" % (self.iter, rankedAdditions[0], self.iter))
-            if self.iter < self.maxiter:
+            if self.iter >= self.maxiter:
+                for file in ["shift.tab", "include.samples", "up.features", "down.features",
+                             "mut.features", "mut.circle", "shift.circle", "pshift.train.tab",
+                             "mut.train.scores", "non.train.scores", "pshift.test.tab",
+                             "mut.test.scores", "non.test.scores", "auc.stat", "real.scores",
+                             "null.scores", "sig.tab", "paradigm_up.tab", "paradigm_down.tab"]:
+                    if os.path.exists("iter_%s/%s" % (self.iter, file)):
+                        system("cp iter_%s/%s %s" % (self.iter, file, file))
+            elif len(set(self.additionMap.keys()) - set(updatedAdditions)) == 0:
+                for file in ["shift.tab", "include.samples", "up.features", "down.features",
+                             "mut.features", "mut.circle", "shift.circle", "pshift.train.tab",
+                             "mut.train.scores", "non.train.scores", "pshift.test.tab",
+                             "mut.test.scores", "non.test.scores", "auc.stat", "real.scores",
+                             "null.scores", "sig.tab", "paradigm_up.tab", "paradigm_down.tab"]:
+                    if os.path.exists("iter_%s/%s" % (self.iter, file)):
+                        system("cp iter_%s/%s %s" % (self.iter, file, file))
+            else:
+                if self.fold == 0:
+                    f = open("../../%s.log" % (self.mutatedGene), "a")
+                    f.write("%s\t%s\t%s\n" % (self.additionMap[rankedAdditions[0]]))
+                    f.close()
                 self.setFollowOnTarget(greedyBranchSearch(self.fold, self.mutatedGene, 
                                                           self.mutatedSamples, self.dataSamples, 
                                                           self.trainSamples, self.uPathway, 
                                                           self.dPathway, self.iter+1, self.maxiter, 
                                                           updatedAdditions, self.additionMap, 
                                                           self.links, self.directory))
-            else:
-                for file in ["shift.tab", "include.samples", "up.features", "down.features", 
-                             "mut.features", "mut.circle", "shift.circle", "pshift.train.tab",
-                             "mut.train.scores", "non.train.scores", "pshift.test.tab",
-                             "mut.test.scores", "non.test.scores", "auc.stat", "real.scores",
-                             "null.scores", "sig.tab"]:
-                    if os.path.exists("iter_%s/%s" % (self.iter, file)):
-                        system("cp iter_%s/%s %s" % (self.iter, file, file))        
-        else:
-            for file in ["shift.tab", "include.samples", "up.features", "down.features", 
-                         "mut.features", "mut.circle", "shift.circle", "pshift.train.tab",
-                         "mut.train.scores", "non.train.scores", "pshift.test.tab",
-                         "mut.test.scores", "non.test.scores", "auc.stat", "real.scores",
-                         "null.scores", "sig.tab"]:
-                if os.path.exists("iter_%s/%s" % (self.iter-1, file)):
-                    system("cp iter_%s/%s %s" % (self.iter-1, file, file))
 
 class runPARADIGM(Target):
     def __init__(self, fold, mutatedGene, mutatedSamples, dataSamples, trainSamples, uPathway, 
@@ -703,11 +731,11 @@ class runPARADIGM(Target):
         ## run paradigm (observed and nulls)
         system("echo Running PARADIGM inference ... >> progress.log")
         if not paradigmPublic:
-			self.addChildTarget(jtCmd("%s -p upstream_pathway.tab -c config.txt -b %s -o %s" % (paradigmExec, "%s/up_" % (self.dataPath), "%s_upstream.fa" % (self.mutatedGene)), self.directory))
-			self.addChildTarget(jtCmd("%s -p downstream_pathway.tab -c config.txt -b %s -o %s" % (paradigmExec, "%s/down_" % (self.dataPath), "%s_downstream.fa" % (self.mutatedGene)), self.directory))
-			for null in range(1, nNulls+1):
-				self.addChildTarget(jtCmd("%s -p upstream_pathway.tab -c config.txt -b %s -o %s" % (paradigmExec, "%s/up_N%s_" % (self.dataPath, null), "N%s_%s_upstream.fa" % (null, self.mutatedGene)), self.directory))
-				self.addChildTarget(jtCmd("%s -p downstream_pathway.tab -c config.txt -b %s -o %s" % (paradigmExec, "%s/down_N%s_" % (self.dataPath, null), "N%s_%s_downstream.fa" % (null, self.mutatedGene)), self.directory))
+            self.addChildTarget(jtCmd("%s -p upstream_pathway.tab -c config.txt -b %s -o %s" % (paradigmExec, "%s/up_" % (self.dataPath), "%s_upstream.fa" % (self.mutatedGene)), self.directory))
+            self.addChildTarget(jtCmd("%s -p downstream_pathway.tab -c config.txt -b %s -o %s" % (paradigmExec, "%s/down_" % (self.dataPath), "%s_downstream.fa" % (self.mutatedGene)), self.directory))
+            for null in range(1, nNulls+1):
+                self.addChildTarget(jtCmd("%s -p upstream_pathway.tab -c config.txt -b %s -o %s" % (paradigmExec, "%s/up_N%s_" % (self.dataPath, null), "N%s_%s_upstream.fa" % (null, self.mutatedGene)), self.directory))
+                self.addChildTarget(jtCmd("%s -p downstream_pathway.tab -c config.txt -b %s -o %s" % (paradigmExec, "%s/down_N%s_" % (self.dataPath, null), "N%s_%s_downstream.fa" % (null, self.mutatedGene)), self.directory))
         else:
             system("mkdir outputFiles")
             for b in range(len(self.dataSamples)):
@@ -919,6 +947,7 @@ def main():
     paramMap["inc"] = [0.01]
     paramMap["method"] = ["vsNon"]
     paramMap["stat"] = "tt"
+    paramMap["crossVal"] = "1"
     if os.path.exists("mut.cfg"):
         f = open("mut.cfg", "r")
         for line in f:
@@ -927,7 +956,7 @@ def main():
             pline = re.split("\t", line.rstrip("\r\n"))
             if line.startswith("distanceParams"):
                 paramMap["dist"] = [int(i) for i in re.split(",", pline[1])]
-            elif line.startswith("tstatParams"):
+            elif line.startswith("threshParams"):
                 paramMap["thresh"] = [float(i) for i in re.split(",", pline[1])]
             elif line.startswith("incrParams"):
                 paramMap["inc"] = [float(i) for i in re.split(",", pline[1])]
@@ -937,6 +966,8 @@ def main():
                paramMap["stat"] = int(pline[1])
             elif line.startswith("cohortName"):
                 paramMap["cohortName"] = pline[1]
+            elif line.startswith("crossVal"):
+                paramMap["crossVal"] = pline[1]
         f.close()
     if "cohortName" not in paramMap:
         paramMap["cohortName"] = re.split("/", os.getcwd())[-1]
@@ -987,7 +1018,7 @@ def main():
         paradigmFile = "%s/merge_merged_unfiltered.tab" % (paradigmDir)
     elif os.path.exists("%s/merge_merged.tab" % (paradigmDir)):
         paradigmFile = "%s/merge_merged.tab" % (paradigmDir)
-	
+    
     ## store feature, sample and pathway information
     dataFeatures = list(set(retColumns(cnvFile)) & set(retColumns(expFile)))
     includeFeatures = None
@@ -1004,7 +1035,7 @@ def main():
         gPathway = Pathway(gNodes, gInteractions)
     else:
         gPathway = gfPathway
-	
+    
     mutationOrder = []
     mutationMap = {}
     f = open(mutFile, "r")

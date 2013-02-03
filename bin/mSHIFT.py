@@ -267,7 +267,7 @@ def flattenPathway(inPathway):
             ## update interactions map
             if inPathway.nodes[source] in allowedNodes:
                 if inPathway.nodes[target] in allowedNodes:
-                    if inPathway.interactions[source][target] not in ["component>", "member>"]:
+                    if inPathway.interactions[source][target] not in ["component>"]:
                         if source not in outPathway.nodes:
                             outPathway.nodes[source] = inPathway.nodes[source]
                         if target not in outPathway.nodes:
@@ -285,7 +285,7 @@ def flattenPathway(inPathway):
                             if source not in outPathway.interactions:
                                 outPathway.interactions[source] = {}
                             if inPathway.interactions[source][target] == "component>":
-                                outPathway.interactions[source][element] = "-a>"
+                                outPathway.interactions[source][element] = "-ca>"
                             else:
                                 outPathway.interactions[source][element] = inPathway.interactions[source][target]
             elif source in componentMap:
@@ -972,7 +972,9 @@ def selectMutationNeighborhood(focusGene, mutSamples, dataFile, gPathway, trainS
     for node in upPathway.nodes.keys():
         frontierUp = frontierUp | set(getUpstream(node, maxDistance, gPathway.interactions))
         frontierDown = frontierDown | set(getDownstream(node, maxDistance, gPathway.interactions))
-    frontierUp = frontierUp - frontierDown ##
+    commonSet = frontierUp & frontierDown
+    # frontierUp = frontierUp - commonSet ###
+    # frontierDown = frontierDown - commonSet ###
     frontierUp = list(frontierUp - set([focusGene]))
     frontierDown = list(frontierDown - set([focusGene]))
     f = open("supervised.score", "w")
@@ -999,6 +1001,12 @@ def selectMutationNeighborhood(focusGene, mutSamples, dataFile, gPathway, trainS
             addPaths = shortestPath(node, focusGene, gPathway.interactions)
             for currPath in addPaths:
                 currPath.reverse()
+                # skipPath = False ###
+                # for addNode in currPath:
+                #     if addNode not in (set(frontierUp) | set([focusGene])):
+                #         skipPath = True
+                # if skipPath:
+                #     continue
                 for addNode in currPath:
                     if addNode in upPathway.nodes:
                         continue
@@ -1007,11 +1015,17 @@ def selectMutationNeighborhood(focusGene, mutSamples, dataFile, gPathway, trainS
                     if addNode in gPathway.interactions:
                         for target in gPathway.interactions[addNode].keys():
                             if target in upPathway.nodes:
-                                upPathway.interactions[addNode][target] = gPathway.interactions[addNode][target] 
+                                if gPathway.interactions[addNode][target] == "-ca>":
+                                    upPathway.interactions[addNode][target] = "-a>"
+                                else:
+                                    upPathway.interactions[addNode][target] = gPathway.interactions[addNode][target] 
                     if addNode in rinteractions:
                         for source in rinteractions[addNode].keys():
                             if source in upPathway.nodes and source not in coreNodes:
-                                upPathway.interactions[source][addNode] = gPathway.interactions[source][addNode] 
+                                if gPathway.interactions[source][addNode] == "-ca>":
+                                    upPathway.interactions[source][addNode] = "-a>"
+                                else:
+                                    upPathway.interactions[source][addNode] = gPathway.interactions[source][addNode] 
                     if addNode in matFeatures:
                         tThresh += tIncrement
                         count += 1
@@ -1033,6 +1047,12 @@ def selectMutationNeighborhood(focusGene, mutSamples, dataFile, gPathway, trainS
             if not hasTranscriptional:
                 continue
             for currPath in addPaths:
+                illegalPath = False
+                for index in range(len(currPath)-1):
+                    if gPathway.interactions[currPath[index]][currPath[index+1]].startswith("-ca>"):
+                        illegalPath = True
+                if illegalPath:
+                    continue
                 for addNode in currPath:
                     if addNode in downPathway.nodes:
                         continue
@@ -1040,18 +1060,24 @@ def selectMutationNeighborhood(focusGene, mutSamples, dataFile, gPathway, trainS
                     if addNode in rinteractions:
                         for source in rinteractions[addNode].keys():
                             if source in downPathway.nodes:
-                                if source not in downPathway.interactions:
-                                    downPathway.interactions[source] = {}
-                                downPathway.interactions[source][addNode] = gPathway.interactions[source][addNode]
-                                if gPathway.interactions[source][addNode].startswith("-t"):
-                                    tThresh += tIncrement
-                                    count += 1
+                                if gPathway.interactions[source][addNode].startswith("-ca>"):
+                                    pass
+                                else:
+                                    if source not in downPathway.interactions:
+                                        downPathway.interactions[source] = {}
+                                    downPathway.interactions[source][addNode] = gPathway.interactions[source][addNode]
+                                    if gPathway.interactions[source][addNode].startswith("-t"):
+                                        tThresh += tIncrement
+                                        count += 1
                     if addNode in gPathway.interactions:
                         for target in gPathway.interactions[addNode].keys():
                             if target in downPathway.nodes and target not in coreNodes:
-                                if addNode not in downPathway.interactions:
-                                    downPathway.interactions[addNode] = {}
-                                downPathway.interactions[addNode][target] = gPathway.interactions[addNode][target] 
+                                if gPathway.interactions[addNode][target].startswith("-ca>"):
+                                    pass
+                                else:
+                                    if addNode not in downPathway.interactions:
+                                        downPathway.interactions[addNode] = {}
+                                    downPathway.interactions[addNode][target] = gPathway.interactions[addNode][target] 
     if count >= 4:
         hasDownstream = True
     return(upPathway, downPathway, hasUpstream and hasDownstream)

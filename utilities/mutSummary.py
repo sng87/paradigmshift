@@ -19,8 +19,7 @@ verbose = True
 scriptDir = os.path.realpath(os.path.dirname(sys.argv[0]))
 scriptDir += "/"
 
-truncList = ["Frame_Shift_Del", "Frame_Shift_Ins", "In_Frame_Del", "In_Frame_Ins", 
-             "Nonsense_Mutation", "Splice_Site"]
+truncList = ["Frame_Shift_Del", "Frame_Shift_Ins", "Nonsense_Mutation", "Splice_Site"]
 missList = ["Missense_Mutation"]
 
 
@@ -113,8 +112,8 @@ def main(args):
                 for sample in mutClass[focusGene][type]:
                     if sample not in missenseSamples:
                         missenseSamples.append(sample)    
-        wList("include.samples.%s.truncating" % (focusGene), truncatingSamples)
-        wList("include.samples.%s.missense" % (focusGene), missenseSamples)
+        wList("%s.truncating.tab" % (focusGene), truncatingSamples)
+        wList("%s.missense.tab" % (focusGene), missenseSamples)
         
     
 if __name__ == "__main__":
