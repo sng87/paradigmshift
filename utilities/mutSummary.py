@@ -89,7 +89,7 @@ def main(args):
             types = []
             for type in mutClass[i].keys():
                 if j in mutClass[i][type]:
-                    types.append(j)
+                    types.append(type)
             if len(types) > 0:
                 f.write("\t%s" % (",".join(types)))
             else:

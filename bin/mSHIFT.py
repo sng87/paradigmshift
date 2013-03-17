@@ -242,7 +242,8 @@ def sortConnected(inPathway):
 
 def flattenPathway(inPathway):
     """expands complexes into their respective gene components"""
-    allowedNodes = ["abstract", "family", "miRNA", "protein", "rna"]
+    rinteractions = reverseInteractions(inPathway.interactions)
+    allowedNodes = ["abstract", "miRNA", "protein", "rna"]
     outPathway = Pathway({}, {})
     ## read and search componentMap for protein components
     componentMap = getComponentMap(inPathway.nodes, inPathway.interactions)
@@ -288,6 +289,18 @@ def flattenPathway(inPathway):
                                 outPathway.interactions[source][element] = "-ca>"
                             else:
                                 outPathway.interactions[source][element] = inPathway.interactions[source][target]
+                elif inPathway.nodes[target] == "family":
+                    if inPathway.interactions[source][target] not in ["component>", "member>"]:
+                        #### some families have 0 members or complex members
+                        for element in rinteractions[target].keys():
+                            if rinteractions[target][element] == "member>":
+                                if source not in outPathway.nodes:
+                                    outPathway.nodes[source] = inPathway.nodes[source]
+                                if element not in outPathway.nodes:
+                                    outPathway.nodes[element] = inPathway.nodes[element]
+                                if source not in outPathway.interactions:
+                                    outPathway.interactions[source] = {}
+                                outPathway.interactions[source][element] = inPathway.interactions[source][target]
             elif source in componentMap:
                 if inPathway.nodes[target] in allowedNodes:
                     for element in componentMap[source]:
@@ -300,6 +313,20 @@ def flattenPathway(inPathway):
                         outPathway.interactions[element][target] = inPathway.interactions[source][target]
                 elif target in componentMap:
                     continue
+            elif inPathway.nodes[source] == "family":
+                if inPathway.nodes[target] in allowedNodes:
+                    if inPathway.interactions[source][target] not in ["component>"]:
+                        if source in rinteractions:
+                            #### some families have 0 members or complex members
+                            for element in rinteractions[source].keys():
+                                if rinteractions[source][element] == "member>":
+                                    if element not in outPathway.nodes:
+                                        outPathway.nodes[element] = inPathway.nodes[element]
+                                    if target not in outPathway.nodes:
+                                        outPathway.nodes[target] = inPathway.nodes[target]
+                                    if element not in outPathway.interactions:
+                                        outPathway.interactions[element] = {}
+                                    outPathway.interactions[element][target] = inPathway.interactions[source][target]
     return(outPathway)
 
 def getNeighbors(node, distance, interactions):
@@ -859,7 +886,7 @@ def scoreVariance(matData, matSamples):
         scoreMap[feature] = mean_std([matData[feature][i] for i in matSamples], sample = True)[1]
     return(scoreMap)
 
-def selectMutationNeighborhood(focusGene, mutSamples, dataFile, gPathway, trainSamples = None, tCutoff = 2.0, tIncrement = 0.5 , maxDistance = 2, method = "vsZero", penalty = 0.5):
+def selectMutationNeighborhood(focusGene, mutSamples, dataFile, gPathway, trainSamples = None, tCutoff = 0.68, tIncrement = 0.05 , maxDistance = 2, method = "vsZero"):
     """performs simple univariate approach for selecting features with a threshold"""
     ## load data
     (matData, matFeatures, matSamples) = rCRSData(dataFile, retFeatures = True)
@@ -1082,7 +1109,7 @@ def selectMutationNeighborhood(focusGene, mutSamples, dataFile, gPathway, trainS
         hasDownstream = True
     return(upPathway, downPathway, hasUpstream and hasDownstream)
 
-def selectMutationNeighborhood_previous(focusGene, mutSamples, dataFile, gPathway, trainSamples = None, tCutoff = 2.0, tIncrement = 0.5 , maxDistance = 2, method = "vsZero", penalty = 0.5):
+def selectMutationNeighborhood_previous(focusGene, mutSamples, dataFile, gPathway, trainSamples = None, tCutoff = 2.0, tIncrement = 0.5 , maxDistance = 2, method = "vsZero"):
     """performs simple univariate approach for selecting features with a threshold"""
     ## load data
     (matData, matFeatures, matSamples) = rCRSData(dataFile, retFeatures = True)
