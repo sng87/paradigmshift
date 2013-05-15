@@ -1,5 +1,6 @@
 import math, os, sys, random, re
 from copy import deepcopy
+from array import array
 
 def log(msg, file = None, die = False):
     """logger function"""
@@ -457,6 +458,74 @@ def removeNode(node, pNodes, pInteractions):
                 del rpInteractions[node]
     return(pNodes, pInteractions)
 
+class DataMatrix:
+    def __init__(self, inf, delim = "\t", null = "NA", useCols = None, useRows = None, 
+                 type = "float"):
+        ## initiate objects to be stored in class
+        if type == "float":
+            dataVals = array('f')
+        else:
+            dataVals = []
+        colFeatures = []
+        colIndex = {}
+        rowFeatures = []
+        rowIndex = {}
+        
+        ## read header
+        f = open(inf, "r")
+        line = f.readline().rstrip()
+        if line.isspace():
+            log("ERROR: encountered a blank on line 1\n", die = True)
+        pline = line.split(delim)
+        for ind, col in enumerate(pline[1:]):
+            if useCols != None:
+                if col not in useCols:
+                    continue
+            colIndex[col] = ind
+            colFeatures.append(col)
+        lineLength = len(pline)
+        
+        ## read data
+        ind = 0
+        for line in f:
+            if line.isspace():
+                continue
+            line = line.rstrip()
+            pline = line.split(delim)
+            if len(pline) != lineLength:
+                log("ERROR: length of line does not match the rest of %s\n" 
+                    % (os.path.abspath(inf)), file = "err.log" , die = True)
+            row = pline[0]
+            if useRows != None:
+                if row not in useRows:
+                    continue
+            rowIndex[row] = ind
+            rowFeatures.append(row)
+            for col in colFeatures:
+                if (pline[colIndex[col]+1] == "") or (pline[colIndex[col]+1] == null):
+                    if type == "float":
+                        dataVals.append(float("nan"))
+                    else:
+                        dataVals.append(null)
+                else: 
+                    if type == "float":
+                        dataVals.append(float(pline[colIndex[col]+1]))
+                    else:
+                        dataVals.append(pline[colIndex[col]+1])
+            ind += 1
+        f.close()
+        self.values = deepcopy(dataVals)
+        self.columns = deepcopy(colFeatures)
+        self.cmap = deepcopy(colIndex)
+        self.rows = deepcopy(rowFeatures)
+        self.rmap = deepcopy(rowIndex)
+    def get(self, col, row):
+        colLength = len(self.columns)
+        rowLength = len(self.rows)
+        colIndex = self.cmap[col]
+        rowIndex = self.rmap[row]
+        return(self.values[colIndex*rowLength+rowIndex])
+        
 def retColumns(inf, delim = "\t"):
     """returns the columns of a .tsv"""
     f = open(inf, "r")
@@ -880,6 +949,12 @@ def scoreTT(matData, posSamples, negSamples):
         scoreMap[feature] = ttest([matData[feature][i] for i in negSamples], [matData[feature][i] for i in posSamples])
     return(scoreMap)
 
+def scoreTT_dm(dataMatrix, posSamples, negSamples):
+    scoreMap = {}
+    for feature in dataMatrix.columns:
+        scoreMap[feature] = ttest([dataMatrix.get(feature, i) for i in negSamples], [dataMatrix.get(feature, i) for i in posSamples])
+    return(scoreMap)
+
 def scoreVariance(matData, matSamples):
     scoreMap = {}
     for feature in matData.keys():
@@ -889,7 +964,10 @@ def scoreVariance(matData, matSamples):
 def selectMutationNeighborhood(focusGene, mutSamples, dataFile, gPathway, trainSamples = None, tCutoff = 0.68, tIncrement = 0.05 , maxDistance = 2, method = "vsZero"):
     """performs simple univariate approach for selecting features with a threshold"""
     ## load data
-    (matData, matFeatures, matSamples) = rCRSData(dataFile, retFeatures = True)
+    matData = DataMatrix(dataFile)
+    matFeatures = matData.columns
+    matSamples = matData.rows
+    # (matData, matFeatures, matSamples) = rCRSData(dataFile, retFeatures = True)
     if trainSamples is not None and method != "variance":
         matSamples = list(set(matSamples) & set(trainSamples))
     mutatedSamples = list(set(mutSamples) & set(matSamples))
@@ -906,7 +984,8 @@ def selectMutationNeighborhood(focusGene, mutSamples, dataFile, gPathway, trainS
         nodeUnsigned = scoreSVM(matData, mutatedSamples, permuteSamples)
         nodeScore = rankScores(nodeUnsigned)
     elif method == "vsNon":
-        nodeUnsigned = scoreTT(matData, mutatedSamples, nonSamples)
+        #nodeUnsigned = scoreTT(matData, mutatedSamples, nonSamples)
+        nodeUnsigned = scoreTT_dm(matData, mutatedSamples, nonSamples)
         nodeScore = rankScores(nodeUnsigned)
     elif method == "vsPerm":
         nodeUnsigned = scoreTT(matData, mutatedSamples, permuteSamples)
@@ -1056,7 +1135,7 @@ def selectMutationNeighborhood(focusGene, mutSamples, dataFile, gPathway, trainS
                     if addNode in matFeatures:
                         tThresh += tIncrement
                         count += 1
-    if count >= 4:
+    if count >= 3:
         hasUpstream = True
     
     ## add downPathway features by score
@@ -1105,7 +1184,7 @@ def selectMutationNeighborhood(focusGene, mutSamples, dataFile, gPathway, trainS
                                     if addNode not in downPathway.interactions:
                                         downPathway.interactions[addNode] = {}
                                     downPathway.interactions[addNode][target] = gPathway.interactions[addNode][target] 
-    if count >= 4:
+    if count >= 3:
         hasDownstream = True
     return(upPathway, downPathway, hasUpstream and hasDownstream)
 
@@ -1338,10 +1417,12 @@ def shiftCV(mutatedGene, mutatedSamples, dataSamples, trainSamples, uPathway, dP
     ## score shifts
     shiftScore = {}
     for sample in (mutGroup + nonGroup + permGroup):
-        shiftScore[sample] = downScore[sample][mutatedGene] - upScore[sample][mutatedGene]
+        if (sample in downScore) and (sample in upScore):
+            shiftScore[sample] = downScore[sample][mutatedGene] - upScore[sample][mutatedGene]
     for sample in (mutGroup + nonGroup + permGroup):
-        for null in range(1, nNulls+1):
-            shiftScore["null%s_%s" % (null, sample)] = n_downScore[null][sample][mutatedGene] - n_upScore[null][sample][mutatedGene]
+        if (sample in downScore) and (sample in upScore):
+            for null in range(1, nNulls+1):
+                shiftScore["null%s_%s" % (null, sample)] = n_downScore[null][sample][mutatedGene] - n_upScore[null][sample][mutatedGene]
     
     ## output scores if just applying model
     if len(trainSamples) == 0:
@@ -1368,9 +1449,17 @@ def shiftCV(mutatedGene, mutatedSamples, dataSamples, trainSamples, uPathway, dP
     f.write("%s\n" % (mutatedGene))
     f.close()
     f = open("mut.circle", "w")
-    f.write("id\t%s\n" % ("\t".join(mutGroup_tr + nonGroup_tr + permGroup_tr)))
+    f.write("## 0=255,255,255 1=0,0,0 0.5=150,150,150\n")
+    f.write("id")
+    for sample in (mutGroup_tr + nonGroup_tr + permGroup_tr):
+        if sample not in shiftScore:
+            continue
+        f.write("\t%s" % (sample))
+    f.write("\n")
     f.write("*")
     for sample in (mutGroup_tr + nonGroup_tr + permGroup_tr):
+        if sample not in shiftScore:
+            continue
         if sample in mutGroup:
             f.write("\t1")
         elif sample in nonGroup:
@@ -1380,16 +1469,25 @@ def shiftCV(mutatedGene, mutatedSamples, dataSamples, trainSamples, uPathway, dP
     f.write("\n")
     f.close()
     f = open("shift.circle", "w")
-    f.write("id\t%s\n" % ("\t".join(mutGroup_tr + nonGroup_tr + permGroup_tr)))
+    f.write("id")
+    for sample in (mutGroup_tr + nonGroup_tr + permGroup_tr):
+        if sample not in shiftScore:
+            continue
+        f.write("\t%s" % (sample))
+    f.write("\n")
     f.write("*")
     for sample in (mutGroup_tr + nonGroup_tr + permGroup_tr):
+        if sample not in shiftScore:
+            continue
         f.write("\t%s" % (shiftScore[sample]))
     f.write("\n")
     f.close()
     
     ## compute CV statistics
-    (nonMean, nonStd) = mean_std([shiftScore[sample] for sample in nonGroup_tr])
-    (permMean, permStd) = mean_std([shiftScore[sample] for sample in permGroup_tr])
+    if len(list(set(nonGroup_tr) & set(shiftScore.keys()))) > 0:
+        (nonMean, nonStd) = mean_std([shiftScore[sample] for sample in nonGroup_tr])
+    if len(list(set(permGroup_tr) & set(shiftScore.keys()))) > 0:
+        (permMean, permStd) = mean_std([shiftScore[sample] for sample in permGroup_tr])
     labelMap = {}
     nonScore_tr = {}
     nonScore_te = {}

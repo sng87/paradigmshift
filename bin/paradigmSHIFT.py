@@ -14,7 +14,7 @@ from jobTree.src.bioio import system
 from jobTree.scriptTree.target import Target
 from jobTree.scriptTree.stack import Stack
 
-## randomize seed
+## select seed
 if not os.path.exists("seed.log"):
     randSeed = random.randint(0,9999999999999999)
     f = open("seed.log", "w")
@@ -31,13 +31,102 @@ circleExec = "circlePlot.py"
 htmlDir = "/inside/grotto/users/sng/.html"
 
 ## default variables
-paradigmPublic = False            ## Use public binary (does not support sample splitting)
-useGreedy = False                 ## Use greedy network search (not implemented)
-useFlattened = True               ## Flattens complexes to prevent long complex chains
-maxFeatures = 15                  ## Maximum number of features to in PARADIGM Shift run
-mutationThreshold = 5             ## Minimum mutations in cohort needed to consider a gene
-nNulls = 100                      ## Number of nulls to run for background model
+useGreedy = False                ## Use greedy network search (not implemented)
+useFlattened = True              ## Flattens complexes to prevent long complex chains
+maxFeatures = 15                 ## Maximum number of features to in PARADIGM Shift run
+mutationThreshold = 5            ## Minimum mutations in cohort needed to consider a gene
 
+## object classes
+class ParadigmSetup:
+    def __init__(self, directory, include, public = False, size = 15, nulls = 30):
+        self.directory = directory
+        self.config = None
+        self.params = None
+        self.pathway = None
+        self.cnv = None
+        self.exp = None
+        self.ipl = None
+        self.features = []
+        self.samples = []
+        assert os.path.exists("%s/config.txt" % (directory))
+        self.config = "%s/config.txt" % (directory)
+        assert os.path.exists("%s/params.txt" % (directory))
+        self.params = "%s/params.txt" % (directory)        
+        assert os.path.exists("%s/clusterFiles" % (directory))
+        for file in os.listdir("%s/clusterFiles" % (directory)):
+            if file.endswith("pathway.tab"):
+                self.pathway = "%s/clusterFiles/%s" % (directory, file)
+            elif file.endswith("CNV.tab"):
+                self.cnv = "%s/clusterFiles/%s" % (directory, file)
+            elif (file.endswith("Expression.tab") | 
+                  file.endswith("Expression.vCohort.tab") |
+                  file.endswith("Expression.vNormal.tab")):
+                self.exp = "%s/clusterFiles/%s" % (directory, file)
+        assert(self.pathway != None)
+        assert(self.cnv != None)
+        assert(self.exp != None)
+        if os.path.exists("%s/merge_merged_unfiltered.tab" % (directory)):
+            self.ipl = "%s/merge_merged_unfiltered.tab" % (directory)
+        elif os.path.exists("%s/merge_merged.tab" % (directory)):
+            self.ipl = "%s/merge_merged.tab" % (directory)
+        self.features = list(set(retColumns(self.cnv)) & set(retColumns(self.exp)))
+        self.samples = list(set(retRows(self.cnv)) & set(retRows(self.exp)))
+        if include:
+            self.samples = list(set(self.samples) & set(rList(include)))
+        self.public = public
+        self.size = size
+        self.nulls = 30
+
+class Parameters:
+    def __init__(self):
+        self.distance = [2]
+        self.threshold = [0.68]
+        self.penalty = [0.01]
+        self.selection = ["vsNon"]
+        self.cv = True
+        self.msep = "tt"
+        self.cohort = os.getcwd().split("/")[-1]
+    def set(self, configFile):
+        f = open(configFile, "r")
+        for line in f:
+            if line.isspace():
+                continue
+            pline = line.rstrip().split("\t")
+            if line.startswith("distance"):
+                self.distance = [int(item) for item in pline[1].split(",")]
+            elif line.startswith("threshold"):
+                self.threshold = [float(item) for item in pline[1].split(",")]
+            elif line.startswith("penalty"):
+                self.penalty = [float(item) for item in pline[1].split(",")]
+            elif line.startswith("selection"):
+                self.selection = [item for item in pline[1].split(",")]
+            elif line.startswith("cv"):
+                self.cv = bool(pline[1])
+            elif line.startswith("msep"):
+                self.msep = pline[1]
+            elif line.startswith("cohort"):
+                self.cohort = pline[1]
+        f.close()
+
+class Mutated:
+    def __init__(self, gene, all, positive, negative = None):
+        self.gene = gene
+        self.positive = list(set(positive) & set(all))
+        if negative:
+            self.negative = list(set(negative) & set(all))
+        else:
+            self.negative = list(set(all) - set(positive))
+    def proportion(self):
+        return(float(len(self.positive))/float(len(self.positive) + len(self.negative)))
+
+def batchCount(cohortSize, batchSize = 15):
+    return(int((cohortSize+batchMax-1)/batchMax))
+
+def chunks(sampleList, batchSize = 15):
+    for i in xrange(0, len(sampleList), batchSize):
+        yield sampleList[i:i+batchSize]
+
+## R script definitions
 def writeScripts():
     """creates the R scripts necessary for plotting"""
     msepR = """#!/usr/bin/env Rscript
@@ -45,7 +134,7 @@ def writeScripts():
     mutGene = args[1]
     mutFile = args[2]
     wtFile = args[3]
-
+    
     mutData = read.table(mutFile)
     wtData = read.table(wtFile)
     xMin = min(mutData$V2, wtData$V2)
@@ -73,7 +162,7 @@ def writeScripts():
     mutGene = args[1]
     realFile = args[2]
     nullFile = args[3]
-
+    
     realData = read.table(realFile)$V1
     nullData = read.table(nullFile)$V1
     nullData = nullData[!is.nan(nullData)]
@@ -102,111 +191,79 @@ def writeScripts():
     f.close
     system("chmod 755 msep.R background.R")
 
+## jobTree classes
 class jtData(Target):
-    def __init__(self, mutatedGene, dataSamples, proteinFeatures, dataFeatures, dataMap, directory):
+    def __init__(self, mutatedGene, useSamples, useFeatures, allFeatures, dataFiles,
+                 directory, paradigmPublic = False, batchSize = 15):
         Target.__init__(self, time=1000)
         self.mutatedGene = mutatedGene
-        self.dataSamples = dataSamples
-        self.proteinFeatures = proteinFeatures
-        self.dataFeatures = dataFeatures
-        self.dataMap = dataMap
+        self.useSamples = useSamples
+        self.useFeatures = useFeatures
+        self.allFeatures = allFeatures
+        self.dataFiles = dataFiles
         self.directory = directory
+        self.paradigmPublic = paradigmPublic
+        self.batchSize = batchSize
     def run(self):
         shiftDir = "%s/analysis/%s" % (self.directory, self.mutatedGene)
         os.chdir(shiftDir)
         random.seed(randSeed)
         
-        ## get files
-        cnvFile = self.dataMap["cnv"]
-        expFile = self.dataMap["exp"]
-        
         ## write data
-        rwCRSData("full_%s" % (re.split("/", cnvFile)[-1]), cnvFile, useRows = self.dataSamples)
-        rwCRSData("full_%s" % (re.split("/", expFile)[-1]), expFile, useRows = self.dataSamples)
-        rwCRSData("up_%s" % (re.split("/", cnvFile)[-1]), cnvFile, useRows = self.dataSamples, useCols = self.proteinFeatures)
-        rwCRSData("up_%s" % (re.split("/", expFile)[-1]), expFile, useRows = self.dataSamples, useCols = self.proteinFeatures)
-        rwCRSData("down_%s" % (re.split("/", cnvFile)[-1]), cnvFile, useRows = self.dataSamples, useCols = list(set(self.proteinFeatures)-set([self.mutatedGene])))
-        rwCRSData("down_%s" % (re.split("/", expFile)[-1]), expFile, useRows = self.dataSamples, useCols = list(set(self.proteinFeatures)-set([self.mutatedGene])))
+        for file in self.dataFiles:
+            rwCRSData("full_%s" % (file.split("/")[-1]), file, useRows = self.useSamples)
+            rwCRSData("up_%s" % (file.split("/")[-1]), file, useRows = self.useSamples, useCols = self.useFeatures)
+            rwCRSData("down_%s" % (file.split("/")[-1]), file, useRows = self.useSamples, useCols = list(set(self.useFeatures)-set([self.mutatedGene])))
         
-        ## add perm_ to sample names
-        rowMap = {}
-        rowFeatures = self.dataSamples
-        rowPermute = ["perm_%s" % (i) for i in rowFeatures]
-        for i in range(0, len(rowFeatures)):
-            rowMap[rowFeatures[i]] = rowPermute[i]
-        
-        ## permute features for simulated normals
-        rcMap = {}
-        for i in rowMap.keys():
-            rcMap[rowMap[i]] = {}
-            colFeatures = list(set(self.dataFeatures)-set([self.mutatedGene]))
-            colPermute = random.sample(colFeatures, len(colFeatures))
-            for j in range(0, len(colFeatures)):
-                rcMap[rowMap[i]][colFeatures[j]] = colPermute[j]
-        
-        ## write simulated normals
-        rwCRSData("full_%s" % (re.split("/", cnvFile)[-1]), cnvFile, rowMap = rowMap, useRows = rcMap.keys(), rcMap = rcMap)
-        rwCRSData("full_%s" % (re.split("/", expFile)[-1]), expFile, rowMap = rowMap, useRows = rcMap.keys(), rcMap = rcMap)
-        rwCRSData("up_%s" % (re.split("/", cnvFile)[-1]), cnvFile, rowMap = rowMap, useRows = rcMap.keys(), rcMap = rcMap, useCols = self.proteinFeatures)
-        rwCRSData("up_%s" % (re.split("/", expFile)[-1]), expFile, rowMap = rowMap, useRows = rcMap.keys(), rcMap = rcMap, useCols = self.proteinFeatures)
-        rwCRSData("down_%s" % (re.split("/", cnvFile)[-1]), cnvFile, rowMap = rowMap, useRows = rcMap.keys(), rcMap = rcMap, useCols = list(set(self.proteinFeatures)-set([self.mutatedGene])))
-        rwCRSData("down_%s" % (re.split("/", expFile)[-1]), expFile, rowMap = rowMap, useRows = rcMap.keys(), rcMap = rcMap, useCols = list(set(self.proteinFeatures)-set([self.mutatedGene])))
+        ## public batching
+        if self.paradigmPublic:
+            batches = batchCount(len(self.useSamples), batchSize = self.batchSize)
+            batchChunker = chunks(self.useSamples, batchSize = self.batchSize)
+            for b in range(batches):
+                currentSamples = batchChunker.next()
+                for file in self.dataFiles:
+                    rwCRSData("up_b%s_%s_%s" % (b, batches, file.split("/")[-1]), file, useRows = currentSamples, useCols = self.useFeatures)
+                    rwCRSData("down_b%s_%s_%s" % (b, batches, file.split("/")[-1]), file, useRows = currentSamples, useCols = list(set(self.useFeatures)-set([self.mutatedGene])))
 
 class jtNData(Target):
-    def __init__(self, null, mutatedGene, dataSamples, proteinFeatures, dataFeatures, dataMap, directory):
+    def __init__(self, null, mutatedGene, useSamples, useFeatures, allFeatures, dataFiles,
+                 directory, paradigmPublic = False, batchSize = 15):
         Target.__init__(self, time=1000)
         self.null = null
         self.mutatedGene = mutatedGene
-        self.dataSamples = dataSamples
-        self.proteinFeatures = proteinFeatures
-        self.dataFeatures = dataFeatures
-        self.dataMap = dataMap
+        self.useSamples = useSamples
+        self.useFeatures = useFeatures
+        self.allFeatures = allFeatures
+        self.dataFiles = dataFiles
         self.directory = directory
+        self.paradigmPublic = paradigmPublic
+        self.batchSize = batchSize
     def run(self):
         shiftDir = "%s/analysis/%s" % (self.directory, self.mutatedGene)
         os.chdir(shiftDir)
         random.seed(randSeed+self.null)
         
-        ## get files
-        cnvFile = self.dataMap["cnv"]
-        expFile = self.dataMap["exp"]
-        
-        ## permute features for nulls
-        rcMap = {}
-        for i in self.dataSamples:
-            rcMap[i] = {}
-            colFeatures = list(set(self.dataFeatures)-set([self.mutatedGene]))
-            colPermute = random.sample(colFeatures, len(colFeatures))
-            for j in range(0, len(colFeatures)):
-                rcMap[i][colFeatures[j]] = colPermute[j]
+        ## permute columns for nulls
+        colMap = {}
+        colFeatures = list(set(self.allFeatures)-set([self.mutatedGene]))
+        colPermute = random.sample(colFeatures, len(colFeatures))
+        for i in range(0, len(colFeatures)):
+            colMap[colFeatures[i]] = colPermute[i]
         
         ## write data
-        rwCRSData("up_N%s_%s" % (self.null, re.split("/", cnvFile)[-1]), cnvFile, useRows = rcMap.keys(), rcMap = rcMap, useCols = self.proteinFeatures)
-        rwCRSData("up_N%s_%s" % (self.null, re.split("/", expFile)[-1]), expFile, useRows = rcMap.keys(), rcMap = rcMap, useCols = self.proteinFeatures)
-        rwCRSData("down_N%s_%s" % (self.null, re.split("/", cnvFile)[-1]), cnvFile, useRows = rcMap.keys(), rcMap = rcMap, useCols = list(set(self.proteinFeatures)-set([self.mutatedGene])))
-        rwCRSData("down_N%s_%s" % (self.null, re.split("/", expFile)[-1]), expFile, useRows = rcMap.keys(), rcMap = rcMap, useCols = list(set(self.proteinFeatures)-set([self.mutatedGene])))
+        for file in self.dataFiles:
+            rwCRSData("up_N%s_%s" % (self.null, file.split("/")[-1]), file, useRows = self.useSamples, colMap = colMap, useCols = self.useFeatures)
+            rwCRSData("down_N%s_%s" % (self.null, file.split("/")[-1]), file, useRows = self.useSamples, colMap = colMap, useCols = list(set(self.useFeatures)-set([self.mutatedGene])))
 
-        ## add perm_ to sample names
-        rowMap = {}
-        rowFeatures = self.dataSamples
-        rowPermute = ["perm_%s" % (i) for i in rowFeatures]
-        for i in range(0, len(rowFeatures)):
-            rowMap[rowFeatures[i]] = rowPermute[i]
-        
-        ## permute features for simulated normals
-        rcMap = {}
-        for i in rowMap.keys():
-            rcMap[rowMap[i]] = {}
-            colFeatures = list(set(self.dataFeatures)-set([self.mutatedGene]))
-            colPermute = random.sample(colFeatures, len(colFeatures))
-            for j in range(0, len(colFeatures)):
-                rcMap[rowMap[i]][colFeatures[j]] = colPermute[j]
-                
-        ## write simulated normals
-        rwCRSData("up_N%s_%s" % (self.null, re.split("/", cnvFile)[-1]), cnvFile, rowMap = rowMap, useRows = rcMap.keys(), rcMap = rcMap, useCols = self.proteinFeatures)
-        rwCRSData("up_N%s_%s" % (self.null, re.split("/", expFile)[-1]), expFile, rowMap = rowMap, useRows = rcMap.keys(), rcMap = rcMap, useCols = self.proteinFeatures)
-        rwCRSData("down_N%s_%s" % (self.null, re.split("/", cnvFile)[-1]), cnvFile, rowMap = rowMap, useRows = rcMap.keys(), rcMap = rcMap, useCols = list(set(self.proteinFeatures)-set([self.mutatedGene])))
-        rwCRSData("down_N%s_%s" % (self.null, re.split("/", expFile)[-1]), expFile, rowMap = rowMap, useRows = rcMap.keys(), rcMap = rcMap, useCols = list(set(self.proteinFeatures)-set([self.mutatedGene])))
+        ## public batching
+        if self.paradigmPublic:
+            batches = batchCount(len(self.useSamples), batchSize = self.batchSize)
+            batchChunker = chunks(self.useSamples, batchSize = self.batchSize)
+            for b in range(batches):
+                currentSamples = batchChunker.next()
+                for file in self.dataFiles:
+                    rwCRSData("up_N%s_b%s_%s_%s" % (self.null, b, batches, file.split("/")[-1]), file, useRows = currentSamples, colMap = colMap, useCols = self.useFeatures)
+                    rwCRSData("down_N%s_b%s_%s_%s" % (self.null, b, batches, file.split("/")[-1]), file, useRows = currentSamples, colMap = colMap, useCols = list(set(self.useFeatures)-set([self.mutatedGene])))
 
 class jtCmd(Target):
     def __init__(self, cmd, directory):
@@ -218,16 +275,12 @@ class jtCmd(Target):
         system(self.cmd)
 
 class branchGenes(Target):
-    def __init__(self, dataSamples, dataFeatures, dataMap, mutationMap, gPathway, paradigmDir, 
-                 paramMap, foldMap, directory):
+    def __init__(self, mutatedList, paradigmSetup, gPathway, params, foldMap, directory):
         Target.__init__(self, time=10000)
-        self.dataSamples = dataSamples
-        self.dataFeatures = dataFeatures
-        self.dataMap = dataMap
-        self.mutationMap = mutationMap
+        self.mutatedList = mutatedList
+        self.paradigmSetup = paradigmSetup
         self.gPathway = gPathway
-        self.paradigmDir = paradigmDir
-        self.paramMap = paramMap
+        self.params = params
         self.foldMap = foldMap
         self.directory = directory
     def run(self):
@@ -237,52 +290,50 @@ class branchGenes(Target):
         htmlFeatures = []
         if not os.path.exists("analysis"):
             system("mkdir analysis")
-        for mutatedGene in self.mutationMap.keys():
-            if not os.path.exists("analysis/%s" % (mutatedGene)):
-                system("mkdir analysis/%s" % (mutatedGene))
-                htmlFeatures.append(mutatedGene)
-                self.addChildTarget(branchFolds(mutatedGene, self.mutationMap[mutatedGene], 
-                                            self.dataSamples, self.dataFeatures, self.dataMap, 
-                                            self.gPathway, self.paradigmDir, self.paramMap, 
-                                            self.foldMap, self.directory))
+        for mutatedFeature in self.mutatedList:
+            if not os.path.exists("analysis/%s" % (mutatedFeature.gene)):
+                system("mkdir analysis/%s" % (mutatedFeature.gene))
+                htmlFeatures.append(mutatedFeature.gene)
+                self.addChildTarget(branchFolds(mutatedFeature, self.paradigmSetup,
+                                                self.gPathway, self.params,
+                                                self.foldMap, self.directory))
         if os.path.exists(htmlDir):
-            self.setFollowOnTarget(pshiftReport(htmlFeatures, "%s/%s" % (htmlDir, self.paramMap["cohortName"]), self.directory))
+            self.setFollowOnTarget(pshiftReport(htmlFeatures, "%s/%s" % (htmlDir, self.params.cohort), self.directory))
 
 class branchFolds(Target):
-    def __init__(self, mutatedGene, mutatedSamples, dataSamples, dataFeatures, dataMap, gPathway, 
-                 paradigmDir, paramMap, foldMap, directory):
+    def __init__(self, mutatedFeature, paradigmSetup, gPathway, params, foldMap, directory):
         Target.__init__(self, time=10000)
-        self.mutatedGene = mutatedGene
-        self.mutatedSamples = mutatedSamples
-        self.dataSamples = dataSamples
-        self.dataFeatures = dataFeatures
-        self.dataMap = dataMap
+        self.mutatedFeature = mutatedFeature
+        self.paradigmSetup = paradigmSetup
         self.gPathway = gPathway
-        self.paradigmDir = paradigmDir
-        self.paramMap = paramMap
+        self.params = params
         self.foldMap = foldMap
         self.directory = directory
     def run(self):
-        shiftDir = "%s/analysis/%s" % (self.directory, self.mutatedGene)
+        shiftDir = "%s/analysis/%s" % (self.directory, self.mutatedFeature.gene)
         os.chdir(shiftDir)
         random.seed(randSeed+123454321)
         
         ## prepare htmlDir
         
-        ## get proteinFeatures based on maxDist  and gPathway
+        ## get proteinFeatures based on maxDist and gPathway
         system("echo Preparing Genomic Data ... >> progress.log")
         proteinFeatures = []
-        for feature in getNeighbors(self.mutatedGene, max(self.paramMap["dist"]) + 1, self.gPathway.interactions):
+        for feature in getNeighbors(self.mutatedFeature.gene, max(self.params.distance) + 1, self.gPathway.interactions):
             if self.gPathway.nodes[feature] == "protein":
                 proteinFeatures.append(feature)
         
         ## write data
-        genData = jtData(self.mutatedGene, self.dataSamples, proteinFeatures, self.dataFeatures, 
-                         self.dataMap, self.directory)
+        genData = jtData(self.mutatedFeature.gene, self.paradigmSetup.samples, proteinFeatures, self.paradigmSetup.features, 
+                         [self.paradigmSetup.cnv, self.paradigmSetup.exp], self.directory,
+                         paradigmPublic = self.paradigmSetup.public,
+                         batchSize = self.paradigmSetup.size)
         genData.run()
-        for null in range(1, nNulls+1):
-            genData = jtNData(null, self.mutatedGene, self.dataSamples, proteinFeatures, 
-                              self.dataFeatures, self.dataMap, self.directory)
+        for null in range(1, self.paradigmSetup.nulls+1):
+            genData = jtNData(null, self.mutatedFeature.gene, self.paradigmSetup.samples, proteinFeatures, self.paradigmSetup.features,
+                              [self.paradigmSetup.cnv, self.paradigmSetup.exp], self.directory,
+                              paradigmPublic = self.paradigmSetup.public,
+                              batchSize = self.paradigmSetup.size)
             genData.run()
         
         ## pick samples
@@ -290,8 +341,8 @@ class branchFolds(Target):
         rRepeats = len(self.foldMap.keys())
         mFolds = len(self.foldMap[1].keys())
         if self.foldMap[1][1] is None:
-            mutSamples = self.mutatedSamples
-            nonSamples = list(set(self.dataSamples) - set(self.mutatedSamples))
+            mutSamples = self.mutatedFeature.positive
+            nonSamples = self.mutatedFeature.negative
             foldSamples = {}
             for r in range(1, rRepeats+1):
                 foldSamples[r] = {}
@@ -310,47 +361,42 @@ class branchFolds(Target):
         else:
             foldSamples = deepcopy(self.foldMap)
         
-        ## branch folds ###
-        if self.paramMap["crossVal"] == "1":
+        ## branch folds
+        if self.params.cv:
             for r in range(1, rRepeats+1):
                 for f in range(1, mFolds+1):
                     fold = (r-1)*mFolds+f
                     system("mkdir fold%s" % (fold))
-                    self.addChildTarget(branchParams(fold, self.mutatedGene, self.mutatedSamples, 
-                                                     self.dataSamples, foldSamples[r][f], 
-                                                     self.dataFeatures, self.dataMap, self.gPathway,
-                                                     self.paradigmDir, self.paramMap, self.foldMap, 
-                                                     self.directory))
+                    self.addChildTarget(branchParams(fold, self.mutatedFeature,
+                                                     foldSamples[r][f], self.paradigmSetup,
+                                                     self.gPathway, self.params,
+                                                     self.foldMap, self.directory))
         
         ## run final
-        self.setFollowOnTarget(branchParams(0, self.mutatedGene, self.mutatedSamples, 
-                                            self.dataSamples, self.dataSamples, self.dataFeatures, 
-                                            self.dataMap, self.gPathway, self.paradigmDir, 
-                                            self.paramMap, self.foldMap, self.directory))
+        self.setFollowOnTarget(branchParams(0, self.mutatedFeature, 
+                                            self.paradigmSetup.samples, self.paradigmSetup,
+                                            self.gPathway, self.params, self.foldMap,
+                                            self.directory))
 
 class branchParams(Target):
-    def __init__(self, fold, mutatedGene, mutatedSamples, dataSamples, trainSamples, dataFeatures, 
-                 dataMap, gPathway, paradigmDir, paramMap, foldMap, directory):
+    def __init__(self, fold, mutatedFeature, trainSamples, paradigmSetup, gPathway,
+                 params, foldMap, directory):
         Target.__init__(self, time=10000)
         self.fold = fold
-        self.mutatedGene = mutatedGene
-        self.mutatedSamples = mutatedSamples
-        self.dataSamples = dataSamples
+        self.mutatedFeature = mutatedFeature
         self.trainSamples = trainSamples
-        self.dataFeatures = dataFeatures
-        self.dataMap = dataMap
+        self.paradigmSetup = paradigmSetup
         self.gPathway = gPathway
-        self.paradigmDir = paradigmDir
-        self.paramMap = paramMap
+        self.params = params
         self.foldMap = foldMap
         self.directory = directory
     def run(self):
         if self.fold == 0:
-            shiftDir = "%s/analysis/%s" % (self.directory, self.mutatedGene)
+            shiftDir = "%s/analysis/%s" % (self.directory, self.mutatedFeature.gene)
             os.chdir(shiftDir)
             system("echo Building Final Model ... >> progress.log")
         else:
-            shiftDir = "%s/analysis/%s/fold%s" % (self.directory, self.mutatedGene, self.fold)
+            shiftDir = "%s/analysis/%s/fold%s" % (self.directory, self.mutatedFeature.gene, self.fold)
             os.chdir(shiftDir)
         
         ## average cross validation aucs for final run
@@ -366,81 +412,77 @@ class branchParams(Target):
                         f = open("fold%s/auc.stat" % (fold), "r")
                         line = f.readline()
                         f.close()
-                        (auc_tr, auc_te, mparams) = re.split("\t", line.rstrip("\r\n"))
+                        (auc_tr, auc_te, mparams) = line.rstrip().split("\t")
                     else:
-                        (auc_tr, auc_te, mparams) = ("NA", "NA", "NA")
+                        (auc_tr, auc_te, mparams) = ("---", "---", "---")
                     aucList.append(auc_te)
                     aucLines.append("%s\t%s\t%s\t%s\n" % (fold, auc_tr, auc_te, mparams))
             o = open("avgAUC.tab", "w")
-            o.write("> %s\tavgAUC:%s\n" % (self.mutatedGene, mean(aucList)))
+            o.write("> %s\tavgAUC:%s\n" % (self.mutatedFeature.gene, mean(aucList)))
             o.write("# fold\ttrain\ttest\tparams\n")
             for line in aucLines:
                 o.write(line)
             o.close()
         
         ## branch params
-        for dist in self.paramMap["dist"]:
-            for thresh in self.paramMap["thresh"]:
-                for inc in self.paramMap["inc"]:
-                    for method in self.paramMap["method"]:
-                        system("mkdir param_%s_%s_%s_%s" % (dist, thresh, inc, method))
-                        os.chdir("param_%s_%s_%s_%s" % (dist, thresh, inc, method))
-                        system("cp %s/config.txt config.txt" % (self.paradigmDir))
-                        system("cp %s/params.txt params.txt" % (self.paradigmDir))
-                        for file in os.listdir(self.paradigmDir):
+        for distance in self.params.distance:
+            for thresh in self.params.threshold:
+                for inc in self.params.penalty:
+                    for method in self.params.selection:
+                        system("mkdir param_%s_%s_%s_%s" % (distance, thresh, inc, method))
+                        os.chdir("param_%s_%s_%s_%s" % (distance, thresh, inc, method))
+                        system("cp %s/config.txt config.txt" % (self.paradigmSetup.directory))
+                        system("cp %s/params.txt params.txt" % (self.paradigmSetup.directory))
+                        for file in os.listdir(self.paradigmSetup.directory):
                             if file.endswith(".imap"):
-                                system("cp %s/%s %s" % (self.paradigmDir, file, file))
+                                system("cp %s/%s %s" % (self.paradigmSetup.directory, file, file))
                             elif file.endswith(".dogma"):
-                                system("cp %s/%s %s" % (self.paradigmDir, file, file))
+                                system("cp %s/%s %s" % (self.paradigmSetup.directory, file, file))
                         os.chdir("..")
-                        self.addChildTarget(prepareNeighborhood(self.fold, self.mutatedGene, 
-                                                    self.mutatedSamples, self.dataSamples, 
-                                                    self.trainSamples, dist, thresh, inc, method,
-                                                    self.dataMap, self.gPathway, 
-                                                    self.directory))
+                        self.addChildTarget(prepareNeighborhood(self.fold, 
+                                                    self.mutatedFeature, self.trainSamples,
+                                                    self.paradigmSetup, distance, thresh, inc, method,
+                                                    self.gPathway, self.directory))
         
         ## evaluate models
-        self.setFollowOnTarget(evaluateParams(self.fold, self.mutatedGene, self.mutatedSamples, 
-                                              self.dataSamples, self.trainSamples, 
-                                              self.dataFeatures, self.dataMap, self.gPathway, 
-                                              self.paramMap, self.directory))
+        self.setFollowOnTarget(evaluateParams(self.fold, self.mutatedFeature, self.trainSamples, 
+                                              self.paradigmSetup, self.gPathway, 
+                                              self.params, self.directory))
         
 class prepareNeighborhood(Target):
-    def __init__(self, fold, mutatedGene, mutatedSamples, dataSamples, trainSamples, dParam,
-                 tParam, iParam, method, dataMap, gPathway, directory):
+    def __init__(self, fold, mutatedFeature, trainSamples, paradigmSetup, dParam,
+                 tParam, iParam, method, gPathway, directory):
         Target.__init__(self, time=10000)
         self.fold = fold
-        self.mutatedGene = mutatedGene
-        self.mutatedSamples = mutatedSamples
-        self.dataSamples = dataSamples
+        self.mutatedFeature = mutatedFeature
         self.trainSamples = trainSamples
+        self.paradigmSetup = paradigmSetup
         self.dParam = dParam
         self.tParam = tParam
         self.iParam = iParam
         self.method = method
-        self.dataMap = dataMap
         self.gPathway = gPathway
         self.directory = directory
     def run(self):
         if self.fold == 0:
-            shiftDir = "%s/analysis/%s/param_%s_%s_%s_%s" % (self.directory, self.mutatedGene, 
+            shiftDir = "%s/analysis/%s/param_%s_%s_%s_%s" % (self.directory, self.mutatedFeature.gene, 
                                                              self.dParam, self.tParam, self.iParam, 
                                                              self.method)
             os.chdir(shiftDir)
             system("echo Preparing Network ... >> progress.log")
-            dataFile = "../up_%s" % (re.split("/", self.dataMap["exp"])[-1])
+            dataFile = "../up_%s" % (self.paradigmSetup.exp.split("/")[-1])
         else:
             shiftDir = "%s/analysis/%s/fold%s/param_%s_%s_%s_%s" % (self.directory,
-                                                                    self.mutatedGene, self.fold, 
+                                                                    self.mutatedFeature.gene, self.fold, 
                                                                     self.dParam, self.tParam, 
                                                                     self.iParam, self.method)
             os.chdir(shiftDir)
-            dataFile = "../../up_%s" % (re.split("/", self.dataMap["exp"])[-1])
+            dataFile = "../../up_%s" % (self.paradigmSetup.exp.split("/")[-1])
         
         ## get upstream and downstream
         system("echo Selecting Mutational Network ... >> progress.log")
-        (uPathway, dPathway, isPass) = selectMutationNeighborhood(self.mutatedGene, 
-                                                                  self.mutatedSamples, dataFile, 
+        (uPathway, dPathway, isPass) = selectMutationNeighborhood(self.mutatedFeature.gene, 
+                                                                  self.mutatedFeature.positive, dataFile, 
                                                                   self.gPathway, 
                                                                   trainSamples = self.trainSamples, 
                                                                   tCutoff = self.tParam, 
@@ -458,27 +500,26 @@ class prepareNeighborhood(Target):
             f.close()
         else:
             if useGreedy:
-                self.setFollowOnTarget(runGreedy(self.fold, self.mutatedGene, self.mutatedSamples, 
-                                                 self.dataSamples, self.trainSamples, uPathway, 
+                self.setFollowOnTarget(runGreedy(self.fold, self.mutatedFeature, 
+                                                 self.trainSamples, uPathway, 
                                                  dPathway, self.directory, shiftDir))
             else:
                 if self.fold == 0:
                     dataPath = "../"
                 else:
                     dataPath = "../../"
-                self.setFollowOnTarget(runPARADIGM(self.fold, self.mutatedGene, self.mutatedSamples, 
-                                                self.dataSamples, self.trainSamples, uPathway, 
-                                                dPathway, dataPath, shiftDir))
+                self.setFollowOnTarget(runPARADIGM(self.fold, self.mutatedFeature, 
+                                                self.trainSamples, self.paradigmSetup,
+                                                uPathway, dPathway, dataPath, shiftDir))
 
 class runGreedy(Target):
-    def __init__(self, fold, mutatedGene, mutatedSamples, dataSamples, trainSamples, uPathway, 
+    def __init__(self, fold, mutatedFeature, trainSamples, paradigmSetup, uPathway, 
                  dPathway, root, directory):
         Target.__init__(self, time=10000)
         self.fold = fold
-        self.mutatedGene = mutatedGene
-        self.mutatedSamples = mutatedSamples
-        self.dataSamples = dataSamples
+        self.mutatedFeature = mutatedFeature
         self.trainSamples = trainSamples
+        self.paradigmSetup = paradigmSetup
         self.uPathway = uPathway
         self.dPathway = dPathway
         self.root = root
@@ -536,22 +577,21 @@ class runGreedy(Target):
             dataPath = "../../"
         else:
             dataPath = "../../../"
-        self.addChildTarget(runPARADIGM(self.fold, self.mutatedGene, self.mutatedSamples, 
-                                        self.dataSamples, self.trainSamples, self.uPathway, 
+        self.addChildTarget(runPARADIGM(self.fold, self.mutatedFeature, 
+                                        self.trainSamples, self.paradigmSetup, self.uPathway, 
                                         self.dPathway, dataPath, "%s/iter_0" % (self.directory)))
-        self.setFollowOnTarget(greedyBranchSearch(self.fold, self.mutatedGene, self.mutatedSamples, 
-                                        self.dataSamples, self.trainSamples, self.uPathway, 
+        self.setFollowOnTarget(greedyBranchSearch(self.fold, self.mutatedFeature, 
+                                        self.trainSamples, self.paradigmSetup, self.uPathway, 
                                         self.dPathway, 1, 5, [], additionMap, lPathway, self.directory))
-        
+
 class greedyBranchSearch(Target):
-    def __init__(self, fold, mutatedGene, mutatedSamples, dataSamples, trainSamples, uPathway, 
+    def __init__(self, fold, mutatedFeature, trainSamples, paradigmSetup, uPathway, 
                  dPathway, iter, maxiter, additions, additionMap, links, directory):
         Target.__init__(self, time=10000)
         self.fold = fold
-        self.mutatedGene = mutatedGene
-        self.mutatedSamples = mutatedSamples
-        self.dataSamples = dataSamples
+        self.mutatedFeature = mutatedFeature
         self.trainSamples = trainSamples
+        self.paradigmSetup = paradigmSetup
         self.uPathway = uPathway
         self.dPathway = dPathway
         self.iter = iter
@@ -622,25 +662,24 @@ class greedyBranchSearch(Target):
                 dataPath = "../../"
             else:
                 dataPath = "../../../"
-            self.addChildTarget(runPARADIGM(self.fold, self.mutatedGene, self.mutatedSamples, 
-                                            self.dataSamples, self.trainSamples, currentUp, 
+            self.addChildTarget(runPARADIGM(self.fold, self.mutatedFeature, 
+                                            self.trainSamples, self.paradigmSetup, currentUp, 
                                             currentDown, dataPath, 
                                             "%s/iter_%s-%s" % (self.directory, self.iter, addition)))
-        self.setFollowOnTarget(greedySelectOptimum(self.fold, self.mutatedGene, self.mutatedSamples, 
-                                                   self.dataSamples, self.trainSamples, 
+        self.setFollowOnTarget(greedySelectOptimum(self.fold, self.mutatedFeature, 
+                                                   self.trainSamples, self.paradigmSetup,
                                                    self.uPathway, self.dPathway, self.iter, 
                                                    self.maxiter, self.additions, self.additionMap,
                                                    self.links, self.directory))      
-            
+
 class greedySelectOptimum(Target):
-    def __init__(self, fold, mutatedGene, mutatedSamples, dataSamples, trainSamples, uPathway, 
+    def __init__(self, fold, mutatedFeature, trainSamples, paradigmSetup, uPathway, 
                  dPathway, iter, maxiter, additions, additionMap, links, directory):
         Target.__init__(self, time=10000)
         self.fold = fold
-        self.mutatedGene = mutatedGene
-        self.mutatedSamples = mutatedSamples
-        self.dataSamples = dataSamples
+        self.mutatedFeature = mutatedFeature
         self.trainSamples = trainSamples
+        self.paradigmSetup = paradigmSetup
         self.uPathway = uPathway
         self.dPathway = dPathway
         self.iter = iter
@@ -702,25 +741,24 @@ class greedySelectOptimum(Target):
                         system("cp iter_%s/%s %s" % (self.iter, file, file))
             else:
                 if self.fold == 0:
-                    f = open("../../%s.log" % (self.mutatedGene), "a")
+                    f = open("../../%s.log" % (self.mutatedFeature.gene), "a")
                     f.write("%s\t%s\t%s\n" % (self.additionMap[rankedAdditions[0]]))
                     f.close()
-                self.setFollowOnTarget(greedyBranchSearch(self.fold, self.mutatedGene, 
-                                                          self.mutatedSamples, self.dataSamples, 
-                                                          self.trainSamples, self.uPathway, 
-                                                          self.dPathway, self.iter+1, self.maxiter, 
-                                                          updatedAdditions, self.additionMap, 
+                self.setFollowOnTarget(greedyBranchSearch(self.fold, self.mutatedFeature,
+                                                          self.trainSamples, self.paradigmSetup,
+                                                          self.uPathway, self.dPathway,
+                                                          self.iter+1, self.maxiter,
+                                                          updatedAdditions, self.additionMap,
                                                           self.links, self.directory))
 
 class runPARADIGM(Target):
-    def __init__(self, fold, mutatedGene, mutatedSamples, dataSamples, trainSamples, uPathway, 
+    def __init__(self, fold, mutatedFeature, trainSamples, paradigmSetup, uPathway, 
                  dPathway, dataPath, directory):
         Target.__init__(self, time=10000)
         self.fold = fold
-        self.mutatedGene = mutatedGene
-        self.mutatedSamples = mutatedSamples
-        self.dataSamples = dataSamples
+        self.mutatedFeature = mutatedFeature
         self.trainSamples = trainSamples
+        self.paradigmSetup = paradigmSetup
         self.uPathway = uPathway
         self.dPathway = dPathway
         self.dataPath = dataPath
@@ -730,86 +768,293 @@ class runPARADIGM(Target):
         
         ## run paradigm (observed and nulls)
         system("echo Running PARADIGM inference ... >> progress.log")
-        if not paradigmPublic:
-            self.addChildTarget(jtCmd("%s -p upstream_pathway.tab -c config.txt -b %s -o %s" % (paradigmExec, "%s/up_" % (self.dataPath), "%s_upstream.fa" % (self.mutatedGene)), self.directory))
-            self.addChildTarget(jtCmd("%s -p downstream_pathway.tab -c config.txt -b %s -o %s" % (paradigmExec, "%s/down_" % (self.dataPath), "%s_downstream.fa" % (self.mutatedGene)), self.directory))
-            for null in range(1, nNulls+1):
-                self.addChildTarget(jtCmd("%s -p upstream_pathway.tab -c config.txt -b %s -o %s" % (paradigmExec, "%s/up_N%s_" % (self.dataPath, null), "N%s_%s_upstream.fa" % (null, self.mutatedGene)), self.directory))
-                self.addChildTarget(jtCmd("%s -p downstream_pathway.tab -c config.txt -b %s -o %s" % (paradigmExec, "%s/down_N%s_" % (self.dataPath, null), "N%s_%s_downstream.fa" % (null, self.mutatedGene)), self.directory))
+        
+        batches = batchCount(len(self.paradigmSetup.samples),
+                             batchSize = self.paradigmSetup.size)
+        if self.paradigmSetup.public:
+            system("mkdir outputFiles")
+            for b in range(batches):
+                self.addChildTarget(jtCmd("%s -p upstream_pathway.tab -c config.txt -b %s -o %s" % (paradigmExec, "%s/up_b%s_%s_" % (self.dataPath, b, batches), "outputFiles/%s_upstream_b%s_%s.fa" % (self.mutatedFeature.gene, b, batches)), self.directory))
+                self.addChildTarget(jtCmd("%s -p downstream_pathway.tab -c config.txt -b %s -o %s" % (paradigmExec, "%s/down_b%s_%s_" % (self.dataPath, b, batches), "outputFiles/%s_downstream_b%s_%s.fa" % (self.mutatedFeature.gene, b, batches)), self.directory))
+                for null in range(1, self.paradigmSetup.nulls+1):
+                    self.addChildTarget(jtCmd("%s -p upstream_pathway.tab -c config.txt -b %s -o %s" % (paradigmExec, "%s/up_N%s_b%s_%s_" % (self.dataPath, null, b, batches), "outputFiles/N%s_%s_upstream_b%s_%s.fa" % (null, self.mutatedFeature.gene, b, batches)), self.directory))
+                    self.addChildTarget(jtCmd("%s -p downstream_pathway.tab -c config.txt -b %s -o %s" % (paradigmExec, "%s/down_N%s_b%s_%s_" % (self.dataPath, null, b, batches), "outputFiles/N%s_%s_downstream_b%s_%s.fa" % (null, self.mutatedFeature.gene, b, batches)), self.directory))
         else:
             system("mkdir outputFiles")
-            for b in range(len(self.dataSamples)):
-                self.addChildTarget(jtCmd("%s -p upstream_pathway.tab -c config.txt -b %s -o %s -s %s,%s" % (paradigmExec, "%s/up_" % (self.dataPath), "outputFiles/%s_upstream_b%s_%s.fa" % (self.mutatedGene, b, len(self.dataSamples)), b, len(self.dataSamples)), self.directory))
-                self.addChildTarget(jtCmd("%s -p downstream_pathway.tab -c config.txt -b %s -o %s -s %s,%s" % (paradigmExec, "%s/down_" % (self.dataPath), "outputFiles/%s_downstream_b%s_%s.fa" % (self.mutatedGene, b, len(self.dataSamples)), b, len(self.dataSamples)), self.directory))
-                for null in range(1, nNulls+1):
-                    self.addChildTarget(jtCmd("%s -p upstream_pathway.tab -c config.txt -b %s -o %s -s %s,%s" % (paradigmExec, "%s/up_N%s_" % (self.dataPath, null), "outputFiles/N%s_%s_upstream_b%s_%s.fa" % (null, self.mutatedGene, b, len(self.dataSamples)), b, len(self.dataSamples)), self.directory))
-                    self.addChildTarget(jtCmd("%s -p downstream_pathway.tab -c config.txt -b %s -o %s -s %s,%s" % (paradigmExec, "%s/down_N%s_" % (self.dataPath, null), "outputFiles/N%s_%s_downstream_b%s_%s.fa" % (null, self.mutatedGene, b, len(self.dataSamples)), b, len(self.dataSamples)), self.directory))
-        self.setFollowOnTarget(evaluateCV(self.fold, self.mutatedGene, self.mutatedSamples, 
-                                          self.dataSamples, self.trainSamples, self.uPathway, 
-                                          self.dPathway, self.directory))
+            for b in range(batches):
+                self.addChildTarget(jtCmd("%s -p upstream_pathway.tab -c config.txt -b %s -o %s -s %s,%s" % (paradigmExec, "%s/up_" % (self.dataPath), "outputFiles/%s_upstream_b%s_%s.fa" % (self.mutatedFeature.gene, b, batches), b, batches), self.directory))
+                self.addChildTarget(jtCmd("%s -p downstream_pathway.tab -c config.txt -b %s -o %s -s %s,%s" % (paradigmExec, "%s/down_" % (self.dataPath), "outputFiles/%s_downstream_b%s_%s.fa" % (self.mutatedFeature.gene, b, batches), b, batches), self.directory))
+                for null in range(1, self.paradigmSetup.nulls+1):
+                    self.addChildTarget(jtCmd("%s -p upstream_pathway.tab -c config.txt -b %s -o %s -s %s,%s" % (paradigmExec, "%s/up_N%s_" % (self.dataPath, null), "outputFiles/N%s_%s_upstream_b%s_%s.fa" % (null, self.mutatedFeature.gene, b, batches), b, batches), self.directory))
+                    self.addChildTarget(jtCmd("%s -p downstream_pathway.tab -c config.txt -b %s -o %s -s %s,%s" % (paradigmExec, "%s/down_N%s_" % (self.dataPath, null), "outputFiles/N%s_%s_downstream_b%s_%s.fa" % (null, self.mutatedFeature.gene, b, batches), b, batches), self.directory))
+        self.setFollowOnTarget(collectPARADIGM(self.fold, self.mutatedFeature, 
+                                          self.trainSamples, self.paradigmSetup,
+                                          self.uPathway, self.dPathway, self.directory))
 
-class evaluateCV(Target):
-    def __init__(self, fold, mutatedGene, mutatedSamples, dataSamples, trainSamples, uPathway, 
+class collectPARADIGM(Target):
+    def __init__(self, fold, mutatedFeature, trainSamples, paradigmSetup, uPathway, 
                  dPathway, directory):
         Target.__init__(self, time=10000)
         self.fold = fold
-        self.mutatedGene = mutatedGene
-        self.mutatedSamples = mutatedSamples
-        self.dataSamples = dataSamples
+        self.mutatedFeature = mutatedFeature
         self.trainSamples = trainSamples
+        self.paradigmSetup = paradigmSetup
         self.uPathway = uPathway
         self.dPathway = dPathway
         self.directory = directory
     def run(self):
         os.chdir(self.directory)
         
-        if paradigmPublic:
-            for b in range(len(self.dataSamples)):
-                system("cat outputFiles/%s_upstream_b%s_%s.fa >> %s_upstream.fa" % (self.mutatedGene, b, len(self.dataSamples), self.mutatedGene))
-                system("cat outputFiles/%s_downstream_b%s_%s.fa >> %s_downstream.fa" % (self.mutatedGene, b, len(self.dataSamples), self.mutatedGene))
-                for null in range(1, nNulls+1):
-                    system("cat outputFiles/N%s_%s_upstream_b%s_%s.fa >> N%s_%s_upstream.fa" % (null, self.mutatedGene, b, len(self.dataSamples), null, self.mutatedGene))
-                    system("cat outputFiles/N%s_%s_downstream_b%s_%s.fa >> N%s_%s_downstream.fa" % (null, self.mutatedGene, b, len(self.dataSamples), null, self.mutatedGene))
-            system("rm -rf outputFiles")
+        batches = batchCount(len(self.paradigmSetup.samples),
+                             batchSize = self.paradigmSetup.size)
+        for b in range(batches):
+            system("cat outputFiles/%s_upstream_b%s_%s.fa >> %s_upstream.fa" % (self.mutatedFeature.gene, b, batches, self.mutatedFeature.gene))
+            system("cat outputFiles/%s_downstream_b%s_%s.fa >> %s_downstream.fa" % (self.mutatedFeature.gene, b, batches, self.mutatedFeature.gene))
+            for null in range(1, self.paradigmSetup.nulls+1):
+                system("cat outputFiles/N%s_%s_upstream_b%s_%s.fa >> N%s_%s_upstream.fa" % (null, self.mutatedFeature.gene, b, batches, null, self.mutatedFeature.gene))
+                system("cat outputFiles/N%s_%s_downstream_b%s_%s.fa >> N%s_%s_downstream.fa" % (null, self.mutatedFeature.gene, b, batches, null, self.mutatedFeature.gene))
+        system("rm -rf outputFiles")
         
-        shiftCV(self.mutatedGene, self.mutatedSamples, self.dataSamples, self.trainSamples, 
-                self.uPathway, self.dPathway, nNulls = nNulls)
+        self.setFollowOnTarget(pshiftCV(self.fold, self.mutatedFeature, self.trainSamples, self.paradigmSetup, self.uPathway, self.dPathway, self.directory, nulls = self.paradigmSetup.nulls))
 
-class evaluateParams(Target):
-    def __init__(self, fold, mutatedGene, mutatedSamples, dataSamples, trainSamples, dataFeatures, 
-                 dataMap, gPathway, paramMap, directory):
+class pshiftCV(Target):
+    def __init__(self, fold, mutatedFeature, trainSamples, paradigmSetup, uPathway, 
+                 dPathway, directory, nulls = 10, msepMethod = "tt", alpha = 0.05):
         Target.__init__(self, time=10000)
         self.fold = fold
-        self.mutatedGene = mutatedGene
-        self.mutatedSamples = mutatedSamples
-        self.dataSamples = dataSamples
+        self.mutatedFeature = mutatedFeature
         self.trainSamples = trainSamples
-        self.dataFeatures = dataFeatures
-        self.dataMap = dataMap
+        self.paradigmSetup = paradigmSetup
+        self.uPathway = uPathway
+        self.dPathway = dPathway
+        self.nulls = nulls
+        self.msepMethod = msepMethod
+        self.alpha = alpha
+        self.directory = directory
+    def run(self):
+        os.chdir(self.directory)
+        
+        ## define sample groups
+        trainGroup = self.trainSamples
+        testGroup = list((set(self.paradigmSetup.samples) - set(self.trainSamples)) & 
+             (set(self.mutatedFeature.positive) | set(self.mutatedFeature.negative)))
+        mutGroup_tr = list(set(self.mutatedFeature.positive) & set(trainGroup))
+        mutGroup_te = list(set(self.mutatedFeature.positive) & set(testGroup))
+        nonGroup_tr = list(set(self.mutatedFeature.negative) & set(trainGroup))
+        nonGroup_te = list(set(self.mutatedFeature.negative) & set(testGroup))
+        
+        ## read paradigm output
+        upScore = rPARADIGM("%s_upstream.fa" % (self.mutatedFeature.gene), 
+                            useRows = self.uPathway.nodes.keys())[1]
+        downScore = rPARADIGM("%s_downstream.fa" % (self.mutatedFeature.gene),
+                            useRows = self.dPathway.nodes.keys())[1]
+        wCRSData("paradigm_up.tab", upScore)
+        wCRSData("paradigm_down.tab", downScore)
+        n_upScore = {}
+        n_downScore = {}
+        for null in range(1, self.nulls+1):
+            if os.path.exists("N%s_%s_upstream.fa" % (null, self.mutatedFeature.gene)):
+                n_upScore[null] = rPARADIGM("N%s_%s_upstream.fa" %
+                                            (null, self.mutatedFeature.gene),
+                                            useRows = [self.mutatedFeature.gene])[1]
+            if os.path.exists("N%s_%s_downstream.fa" % (null, self.mutatedFeature.gene)):
+                n_downScore[null] = rPARADIGM("N%s_%s_downstream.fa" %
+                                              (null, self.mutatedFeature.gene),
+                                              useRows = [self.mutatedFeature.gene])[1]
+    
+        ## score raw shifts
+        rawShift = {}
+        for sample in self.paradigmSetup.samples:
+            if (sample in downScore) and (sample in upScore):
+                rawShift[sample] = (downScore[sample][self.mutatedFeature.gene] -
+                                     upScore[sample][self.mutatedFeature.gene])
+        for sample in self.paradigmSetup.samples:
+            if (sample in downScore) and (sample in upScore):
+                for null in range(1, self.nulls+1):
+                    rawShift["null%s_%s" % (null, sample)] = (
+                                     n_downScore[null][sample][self.mutatedFeature.gene] -
+                                     n_upScore[null][sample][self.mutatedFeature.gene])
+        
+        ## store shifts for mutants and non-mutants normalized by trained non-mutants
+        (nonMean, nonStd) = mean_std([rawShift[sample] for sample in nonGroup_tr])
+        labelMap = {}
+        normShift_tr = {}
+        normShift_te = {}
+        o = open("pshift.train.tab", "w")
+        o.write("> %s\tP-Shifts:Table\n" % (self.mutatedFeature.gene))
+        o.write("# sample\tclass\tP-Shift\n")
+        f = open("mut.train.scores", "w")
+        for sample in mutGroup_tr:
+            labelMap[sample] = 1
+            normShift_tr[sample] = (rawShift[sample]-nonMean)
+            o.write("%s\t+\t%s\n" % (sample, normShift_tr[sample]))
+            f.write("%s\t%s\n" % (sample, normShift_tr[sample]))
+        f.close()
+        f = open("non.train.scores", "w")
+        for sample in nonGroup_tr:
+            labelMap[sample] = 0
+            normShift_tr[sample] = (rawShift[sample]-nonMean)
+            o.write("%s\t-\t%s\n" % (sample, normShift_tr[sample]))
+            f.write("%s\t%s\n" % (sample, normShift_tr[sample]))
+        f.close()
+        o.close()
+        o = open("pshift.test.tab", "w")
+        o.write("> %s\tP-Shifts:Table\n" % (self.mutatedFeature.gene))
+        o.write("# sample\tclass\tP-Shift\n")
+        f = open("mut.test.scores", "w")
+        for sample in mutGroup_te:
+            labelMap[sample] = 1
+            normShift_te[sample] = (rawShift[sample]-nonMean)
+            o.write("%s\t+\t%s\n" % (sample, normShift_te[sample]))
+            f.write("%s\t%s\n" % (sample, normShift_te[sample]))
+        f.close()
+        f = open("non.test.scores", "w")
+        for sample in nonGroup_te:
+            labelMap[sample] = 0
+            normShift_te[sample] = (rawShift[sample]-nonMean)
+            o.write("%s\t-\t%s\n" % (sample, normShift_te[sample]))
+            f.write("%s\t%s\n" % (sample, normShift_te[sample]))
+        f.close()
+        o.close()
+    
+        ## compute auc from stats
+        sorted_tr = normShift_tr.keys()
+        sorted_tr.sort(lambda x, y: cmp(normShift_tr[y],normShift_tr[x]))
+        auc_tr = computeAUC(sorted_tr, labelMap, normShift_tr)[0]
+        if self.fold != 0:
+            sorted_te = normShift_te.keys()
+            sorted_te.sort(lambda x, y: cmp(normShift_te[y],normShift_te[x]))
+            auc_te = computeAUC(sorted_te, labelMap, normShift_te)[0]
+        else:
+            auc_te = "---"
+        f = open("auc.stat", "w")
+        f.write("%s\t%s\n" % (auc_tr, auc_te))
+        f.close()
+        
+        ## output files for circle maps
+        if self.fold == 0:
+            f = open("up.features", "w")
+            for feature in (set(upScore[upScore.keys()[0]].keys()) -
+                                    set([self.mutatedFeature.gene])):
+                f.write("%s\n" % (feature))
+            f.close()
+            f = open("down.features", "w")
+            for feature in (set(downScore[downScore.keys()[0]].keys()) - 
+                                        set([self.mutatedFeature.gene])):
+                f.write("%s\n" % (feature))
+            f.close()
+            f = open("mut.features", "w")
+            f.write("%s\n" % (self.mutatedFeature.gene))
+            f.close()
+            f = open("include.samples", "w")
+            for sample in (self.paradigmSetup.samples):
+                f.write("%s\n" % (sample))
+            f.close()
+            f = open("mut.circle", "w")
+            f.write("id")
+            for sample in (self.paradigmSetup.samples):
+                if sample not in rawShift:
+                    continue
+                f.write("\t%s" % (sample))
+            f.write("\n")
+            f.write("*")
+            for sample in (self.paradigmSetup.samples):
+                if sample not in rawShift:
+                    continue
+                if sample in self.mutatedFeature.positive:
+                    f.write("\t1")
+                elif sample in self.mutatedFeature.negative:
+                    f.write("\t0")
+                else:
+                    f.write("\t0.5")
+            f.write("\n")
+            f.close()
+            f = open("shift.circle", "w")
+            f.write("id")
+            for sample in (self.paradigmSetup.samples):
+                if sample not in rawShift:
+                    continue
+                f.write("\t%s" % (sample))
+            f.write("\n")
+            f.write("*")
+            for sample in (self.paradigmSetup.samples):
+                if sample not in rawShift:
+                    continue
+                f.write("\t%s" % (rawShift[sample]))
+            f.write("\n")
+            f.close()
+        
+        ## compute mutant separation
+        if self.fold == 0:
+            msepScore = {}
+            msepScore["real"] = mutSeparation(nonGroup_tr, mutGroup_tr, rawShift, 
+                                              method = self.msepMethod)
+            for null in range(1, self.nulls+1):
+                msepScore["null%s" % (null)] = mutSeparation(["null%s_%s" % (null, sample) 
+                                                             for sample in nonGroup_tr],
+                                                             ["null%s_%s" % (null, sample)
+                                                             for sample in mutGroup_tr],
+                                                             rawShift, 
+                                                             method = self.msepMethod)
+            f = open("real.scores", "w")
+            f.write("%s\n" % (msepScore["real"]))
+            f.close()
+            f = open("null.scores", "w")
+            for null in range(1, self.nulls+1):
+                f.write("%s\n" % (msepScore["null%s" % (null)]))
+            f.close()
+    
+            ## compute background significance
+            realScores = [msepScore["real"]]
+            nullScores = [msepScore[null] for null in list(set(msepScore.keys()) - set(["real"]))]
+            (nullMean, nullStd) = mean_std(nullScores)
+            significanceScore = (realScores[0]-nullMean)/(nullStd+alpha)
+        
+            ## output sig.stats
+            f = open("sig.tab", "w")
+            f.write("# gene\tnon_mut\tmut\tmsep\tsignificance\n")
+            f.write("%s\t%s\t%s\t%s\t%s\n" % (mutatedGene, len(nonGroup_tr), len(mutGroup_tr), 
+                                              msepScore["real"], significanceScore))
+            f.close()
+        else:
+            f = open("sig.tab", "w")
+            f.write("# gene\tnon_mut\tmut\tmsep\tsignificance\n")
+            f.write("%s\t%s\t%s\t%s\t%s\t%s\n" % (self.mutatedFeature.gene,
+                                                  len(nonGroup_tr), len(mutGroup_tr),
+                                                  "---", "---"))
+            f.close()
+
+class evaluateParams(Target):
+    def __init__(self, fold, mutatedFeature, trainSamples, paradigmSetup, gPathway, params, directory):
+        Target.__init__(self, time=10000)
+        self.fold = fold
+        self.mutatedFeature = mutatedFeature
+        self.trainSamples = trainSamples
+        self.paradigmSetup = paradigmSetup
         self.gPathway = gPathway
-        self.paramMap = paramMap
+        self.params = params
         self.directory = directory
     def run(self):
         if self.fold == 0:
-            shiftDir = "%s/analysis/%s" % (self.directory, self.mutatedGene)
+            shiftDir = "%s/analysis/%s" % (self.directory, self.mutatedFeature.gene)
             os.chdir(shiftDir)
             system("echo Identifying Best Param by Training Validation ... >> progress.log")
         else:
-            shiftDir = "%s/analysis/%s/fold%s" % (self.directory, self.mutatedGene, self.fold)
+            shiftDir = "%s/analysis/%s/fold%s" % (self.directory, self.mutatedFeature.gene, self.fold)
             os.chdir(shiftDir)
         
         ## report AUCs for model with best training validation
         topAUC_tr = 0
         topAUC_te = 0
         topAUC_params = None
-        for dist in self.paramMap["dist"]:
-            for thresh in self.paramMap["thresh"]:
-                for inc in self.paramMap["inc"]:
-                    for method in self.paramMap["method"]:
-                        f = open("param_%s_%s_%s_%s/auc.stat" % (dist, thresh, inc, method), "r")
+        for distance in self.params.distance:
+            for thresh in self.params.threshold:
+                for inc in self.params.penalty:
+                    for method in self.params.selection:
+                        f = open("param_%s_%s_%s_%s/auc.stat" % (distance, thresh, inc, method), "r")
                         line = f.readline()
                         f.close()
-                        (auc_tr, auc_te) = re.split("\t", line.rstrip("\r\n"))
+                        (auc_tr, auc_te) = line.rstrip().split("\t")
                         try:
                             auc_tr = float(auc_tr)
                         except ValueError:
@@ -821,7 +1066,7 @@ class evaluateParams(Target):
                         if auc_tr > topAUC_tr:
                             topAUC_tr = auc_tr
                             topAUC_te = auc_te
-                            topAUC_params = [str(dist), str(thresh), str(inc), str(method)]
+                            topAUC_params = [str(distance), str(thresh), str(inc), str(method)]
         if self.fold != 0:
             f = open("auc.stat", "w")
             if topAUC_tr == 0:
@@ -831,23 +1076,18 @@ class evaluateParams(Target):
             f.close()
         else:
             if topAUC_params is not None:
-                self.setFollowOnTarget(mutationSHIFT(topAUC_params, self.mutatedGene, 
-                                                     self.mutatedSamples, self.dataSamples, 
-                                                     self.dataMap, self.gPathway, self.directory))
+                self.setFollowOnTarget(mutationSHIFT(topAUC_params, self.mutatedFeature, self.paradigmSetup, self.gPathway, self.directory))
             
 class mutationSHIFT(Target):
-    def __init__(self, topAUC_params, mutatedGene, mutatedSamples, dataSamples, 
-                 dataMap, gPathway, directory):
+    def __init__(self, topAUC_params, mutatedFeature, paradigmSetup, gPathway, directory):
         Target.__init__(self, time=10000)
         self.topAUC_params = topAUC_params
-        self.mutatedGene = mutatedGene
-        self.mutatedSamples = mutatedSamples
-        self.dataSamples = dataSamples
-        self.dataMap = dataMap
+        self.mutatedFeature = mutatedFeature
+        self.paradigmSetup = paradigmSetup
         self.gPathway = gPathway
         self.directory = directory
     def run(self):
-        shiftDir = "%s/analysis/%s" % (self.directory, self.mutatedGene)
+        shiftDir = "%s/analysis/%s" % (self.directory, self.mutatedFeature.gene)
         os.chdir(shiftDir)
         
         ## copy tables
@@ -857,21 +1097,21 @@ class mutationSHIFT(Target):
         
         ## output msep and background plots
         system("%s/msep.R %s param_%s/mut.train.scores param_%s/non.train.scores" % (self.directory, 
-                                                 self.mutatedGene, "_".join(self.topAUC_params), 
+                                                 self.mutatedFeature.gene, "_".join(self.topAUC_params), 
                                                  "_".join(self.topAUC_params)))
         system("%s/background.R %s param_%s/real.scores param_%s/null.scores" % (self.directory, 
-                                                 self.mutatedGene, "_".join(self.topAUC_params), 
+                                                 self.mutatedFeature.gene, "_".join(self.topAUC_params), 
                                                  "_".join(self.topAUC_params)))
         
         ## prepare web report
         system("mkdir img")
         
         ## draw circles
-        system("cat up_%s | transpose.pl > param_%s/exp.tab" % (re.split("/", self.dataMap["exp"])[-1], "_".join(self.topAUC_params)))
+        system("cat up_%s | transpose.pl > param_%s/exp.tab" % (self.paradigmSetup.exp.split("/")[-1], "_".join(self.topAUC_params)))
         os.chdir("param_%s" % ("_".join(self.topAUC_params)))
-        system("%s -o \"%s;mut.circle,shift.circle\" -s include.samples -f mut.features ../img/ mut.circle exp.tab paradigm_up.tab paradigm_down.tab shift.circle" % (circleExec, self.mutatedGene))
-        system("%s -o \"%s;mut.circle,shift.circle\" -s include.samples -f up.features ../img/ mut.circle exp.tab paradigm_up.tab" % (circleExec, self.mutatedGene))
-        system("%s -o \"%s;mut.circle,shift.circle\" -s include.samples -f down.features ../img/ mut.circle exp.tab paradigm_down.tab" % (circleExec, self.mutatedGene))
+        system("%s -o \"%s;mut.circle,shift.circle\" -s include.samples -f mut.features ../img/ mut.circle exp.tab paradigm_up.tab paradigm_down.tab shift.circle" % (circleExec, self.mutatedFeature.gene))
+        system("%s -o \"%s;mut.circle,shift.circle\" -s include.samples -f up.features ../img/ mut.circle exp.tab paradigm_up.tab" % (circleExec, self.mutatedFeature.gene))
+        system("%s -o \"%s;mut.circle,shift.circle\" -s include.samples -f down.features ../img/ mut.circle exp.tab paradigm_down.tab" % (circleExec, self.mutatedFeature.gene))
         os.chdir("..")
         
         ## output sif
@@ -880,16 +1120,16 @@ class mutationSHIFT(Target):
         (dNodes, dInteractions) = rPathway("param_%s/downstream_pathway.tab" % 
                                                     ("_".join(self.topAUC_params)))
         cPathway = combinePathways(Pathway(uNodes, uInteractions), Pathway(dNodes, dInteractions))
-        wSIF("pshift_%s.sif" % (self.mutatedGene), cPathway.interactions)
+        wSIF("pshift_%s.sif" % (self.mutatedFeature.gene), cPathway.interactions)
         
         ## node attributes
         scoreMap = {}
-        scoreMap["pshift_%s" % (self.mutatedGene)] = {}
+        scoreMap["pshift_%s" % (self.mutatedFeature.gene)] = {}
         for node in self.gPathway.nodes.keys():
-            if node == self.mutatedGene:
-                scoreMap["pshift_%s" % (self.mutatedGene)][node] = 10
+            if node == self.mutatedFeature.gene:
+                scoreMap["pshift_%s" % (self.mutatedFeature.gene)][node] = 10
             else:
-                scoreMap["pshift_%s" % (self.mutatedGene)][node] = 7
+                scoreMap["pshift_%s" % (self.mutatedFeature.gene)][node] = 7
         wNodeAttributes(self.gPathway.nodes, scoreMap = scoreMap, directory = "./")
 
 class pshiftReport(Target):
@@ -921,9 +1161,13 @@ def main():
     ## parse arguments
     parser = OptionParser(usage = "%prog [options] paradigmDir mutFile ")
     Stack.addJobTreeOptions(parser)
-    parser.add_option("--jobFile", help = "Add as child of jobFile rather than a new jobTree")
-    parser.add_option("-s", "--samples", dest="includeSamples", default="")
-    parser.add_option("-f", "--features", dest="includeFeatures", default="")
+    parser.add_option("--jobFile", help="Add as child of jobFile rather than new jobTree")
+    parser.add_option("-c", "--config", dest="configFile", default=None)
+    parser.add_option("-s", "--samples", dest="includeSamples", default=None)
+    parser.add_option("-f", "--features", dest="includeFeatures", default=None)
+    parser.add_option("-p", "--public", action="store_true", dest="paradigmPublic",
+                      default=False)
+    parser.add_option("-n", "--nulls", dest="nulls", default=30)
     options, args = parser.parse_args()
     print "Using Batch System '%s'" % (options.batchSystem)
     
@@ -937,40 +1181,11 @@ def main():
     assert len(args) == 2
     paradigmDir = os.path.abspath(args[0])
     mutFile = args[1]
-    sampleFile = options.includeSamples
-    featureFile = options.includeFeatures
     
-    ## paramMap
-    paramMap = {}
-    paramMap["dist"] = [2]
-    paramMap["thresh"] = [0.68]
-    paramMap["inc"] = [0.01]
-    paramMap["method"] = ["vsNon"]
-    paramMap["stat"] = "tt"
-    paramMap["crossVal"] = "1"
-    if os.path.exists("mut.cfg"):
-        f = open("mut.cfg", "r")
-        for line in f:
-            if line.isspace():
-                continue
-            pline = re.split("\t", line.rstrip("\r\n"))
-            if line.startswith("distanceParams"):
-                paramMap["dist"] = [int(i) for i in re.split(",", pline[1])]
-            elif line.startswith("threshParams"):
-                paramMap["thresh"] = [float(i) for i in re.split(",", pline[1])]
-            elif line.startswith("incrParams"):
-                paramMap["inc"] = [float(i) for i in re.split(",", pline[1])]
-            elif line.startswith("methodParams"):
-                paramMap["method"] = [i for i in re.split(",", pline[1])]
-            elif line.startswith("signalMethod"):
-               paramMap["stat"] = int(pline[1])
-            elif line.startswith("cohortName"):
-                paramMap["cohortName"] = pline[1]
-            elif line.startswith("crossVal"):
-                paramMap["crossVal"] = pline[1]
-        f.close()
-    if "cohortName" not in paramMap:
-        paramMap["cohortName"] = re.split("/", os.getcwd())[-1]
+    ## get params
+    params = Parameters()
+    if options.configFile:
+        params.set(options.configFile)
     
     ## foldMap
     rRepeats = 1
@@ -994,81 +1209,53 @@ def main():
             for m in range(1, mFolds+1):
                 foldMap[r][m] = None
     
-    ## check files
-    pathwayFile = None
-    cnvFile = None
-    expFile = None
-    dataMap = {}
-    assert os.path.exists("%s/clusterFiles" % (paradigmDir))
-    for file in os.listdir("%s/clusterFiles" % (paradigmDir)):
-        if file.endswith("pathway.tab"):
-            pathwayFile = "%s/clusterFiles/%s" % (paradigmDir, file)
-        elif file.endswith("CNV.tab"):
-            cnvFile = "%s/clusterFiles/%s" % (paradigmDir, file)
-            dataMap["cnv"] = cnvFile
-        elif (file.endswith("Expression.tab") | file.endswith("Expression.vCohort.tab") | 
-              file.endswith("Expression.vNormal.tab")):
-            expFile = "%s/clusterFiles/%s" % (paradigmDir, file)
-            dataMap["exp"] = expFile
-    assert (pathwayFile != None)
-    assert (cnvFile != None)
-    assert (expFile != None)
-    paradigmFile = None
-    if os.path.exists("%s/merge_merged_unfiltered.tab" % (paradigmDir)):
-        paradigmFile = "%s/merge_merged_unfiltered.tab" % (paradigmDir)
-    elif os.path.exists("%s/merge_merged.tab" % (paradigmDir)):
-        paradigmFile = "%s/merge_merged.tab" % (paradigmDir)
+    ## get paradigm files
+    paradigmSetup = ParadigmSetup(paradigmDir, options.includeSamples,
+                                  options.paradigmPublic, options.nulls)
     
-    ## store feature, sample and pathway information
-    dataFeatures = list(set(retColumns(cnvFile)) & set(retColumns(expFile)))
-    includeFeatures = None
-    if len(featureFile) != 0:
-        includeFeatures = rList(featureFile)
-    
-    dataSamples = list(set(retRows(cnvFile)) & set(retRows(expFile)))
-    if len(sampleFile) != 0:
-        dataSamples = list(set(dataSamples) & set(rList(sampleFile)))
-
-    (gNodes, gInteractions) = rPathway(pathwayFile)
+    ## get pathway
+    (gNodes, gInteractions) = rPathway(paradigmSetup.pathway)
     gfPathway = flattenPathway(Pathway(gNodes, gInteractions))
     if not useFlattened:
         gPathway = Pathway(gNodes, gInteractions)
     else:
         gPathway = gfPathway
     
-    mutationOrder = []
-    mutationMap = {}
+    ## get mutation annotations
+    mutatedList = []
+    mutatedMap = {}
     f = open(mutFile, "r")
     for line in f:
         if line.isspace():
             continue
-        pline = re.split("\t", line.rstrip("\r\n"))
-        mutatedGene = pline[0]
-        mutatedSamples = list(set(re.split(",", pline[2])) & set(dataSamples))
-        if mutatedGene in gPathway.nodes:
-            if len(mutatedSamples) >= mutationThreshold:
-                mutationMap[mutatedGene] = deepcopy(mutatedSamples)
-                if includeFeatures is None:
-                    mutationOrder.append(mutatedGene)
+        pline = line.rstrip().split("\t")
+        if len(pline) == 3:
+            mutatedFeature = Mutated(pline[0], paradigmSetup.samples, pline[2].split(","))
+        elif len(pline) == 4:
+            mutatedFeature = Mutated(pline[0], paradigmSetup.samples, pline[2].split(","),
+                           pline[3].split(","))
+        if mutatedFeature.gene in gPathway.nodes:
+            if len(mutatedFeature.positive) >= mutationThreshold:
+                mutatedMap[mutatedFeature.gene] = mutatedFeature
+                mutatedList.append(mutatedFeature.gene)
     f.close()
-    if includeFeatures is not None:
-        for mutatedGene in includeFeatures:
-            if mutatedGene in mutationMap:
-                mutationOrder.append(mutatedGene)
-     
-    submitMap = {}
-    for mutatedGene in mutationOrder:
-        submitMap[mutatedGene] = deepcopy(mutationMap[mutatedGene])
-        if len(submitMap.keys()) >= maxFeatures:
+    if options.includeFeatures:
+        mutatedList = []
+        for gene in rList(options.includeFeatures):
+            if gene in mutatedMap:
+                mutatedList.append(gene)
+    submitList = []
+    for gene in mutatedList:
+        submitList.append(deepcopy(mutatedMap[gene]))
+        if len(submitList) >= maxFeatures:
             break
     
     ## run
     logger.info("options: " + str(options))
     logger.info("starting make")
     writeScripts()
-    
-    s = Stack(branchGenes(dataSamples, dataFeatures, dataMap, submitMap, gPathway, paradigmDir, 
-              paramMap, foldMap, os.getcwd()))
+    s = Stack(branchGenes(submitList, paradigmSetup, gPathway, params, foldMap, 
+                          os.getcwd()))
     if options.jobFile:
         s.addToJobFile(options.jobFile)
     else:
