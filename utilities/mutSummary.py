@@ -12,8 +12,6 @@ Options:
 import getopt, os, os.path, random, re, sys, time, glob
 from copy import deepcopy
 
-from mSHIFT import *
-
 verbose = True
 
 scriptDir = os.path.realpath(os.path.dirname(sys.argv[0]))
@@ -39,6 +37,43 @@ def syscmd(cmd):
     if exitstatus != 0:
         print "ERROR: Failed with exit status %i" % exitstatus
         sys.exit(10)
+
+def rMAF(inf, delim = "\t"):
+    """read .maf format file"""
+    mutData = {}
+    mutClass = {}
+    f = open(inf, "r")
+    line = f.readline()
+    if line.isspace():
+        log("ERROR: encountered a blank on line 1\n", die = True)
+    pline = line.rstrip().split(delim)
+    hugoCol = -1
+    tumorCol = -1
+    classCol = -1
+    for i, j in enumerate(pline):
+        if j == "Hugo_Symbol":
+            hugoCol = i
+        elif j == "Tumor_Sample_Barcode":
+            tumorCol = i
+        elif j == "Variant_Classification":
+            classCol = i
+    samples = []
+    for line in f:
+        if line.isspace():
+            continue
+        pline = line.rstrip().split(delim)
+        if pline[hugoCol] not in mutData:
+            mutData[pline[hugoCol]] = []
+            mutClass[pline[hugoCol]] = {}
+        mutData[pline[hugoCol]].append(pline[tumorCol])
+        if classCol != -1:
+            if pline[classCol] not in mutClass[pline[hugoCol]]:
+                mutClass[pline[hugoCol]][pline[classCol]] = []
+            mutClass[pline[hugoCol]][pline[classCol]].append(pline[tumorCol])
+        if pline[tumorCol] not in samples:
+            samples.append(pline[tumorCol])
+    f.close()
+    return(mutData, mutClass, samples)
 
 def wList(outf, outList):
      """write 1 column list"""
@@ -73,12 +108,21 @@ def main(args):
     mutGenes.sort(lambda x,y: cmp(len(mutMap[y]), len(mutMap[x])))
     f = open("mutationSummary.tab", "w")
     for i in mutGenes:
-        mutSamples = list()
+        mutSamples = []
         for j in mutMap[i]:
-            mutSamples.append(j[0:16])
+            mutSamples.append(j[0:12])
         f.write("%s\t%s\t%s\n" % (i, len(mutMap[i]), ",".join(mutSamples)))
     f.close()
-    wList("include.samples", allSamples)
+    wList("include.samples", [i[0:12] for i in allSamples])
+    
+    ## write mutation.list_t
+    f = open("mutation.list_t", "w")
+    for i in mutGenes:
+        mutSamples = []
+        for j in mutMap[i]:
+            mutSamples.append(j[0:12])
+        f.write("%s\t%s\n" % (i, "\t".join(mutSamples)))
+    f.close()
     
     ## write mutation.tab
     f = open("mutation.tab", "w")
@@ -97,24 +141,25 @@ def main(args):
         f.write("\n")
     f.close()
     
-    ## temporarily hardcoded output of include.samples
-    focusGene = "TP53"
-    if focusGene in mutClass:
-        truncatingSamples = []
+    ## write classifications
+    f = open("mutationClass.tab", "w")
+    for gene in mutClass:
+        truncSamples = []
+        missSamples = []
+        negSamples = [i[0:12] for i in allSamples]
         for type in truncList:
-            if type in mutClass[focusGene]:
-                for sample in mutClass[focusGene][type]:
-                    if sample not in truncatingSamples:
-                        truncatingSamples.append(sample)
-        missenseSamples = []
+            if type in mutClass[gene]:
+                for sample in mutClass[gene][type]:
+                    if sample[0:12] not in truncSamples:
+                        truncSamples.append(sample[0:12])
         for type in missList:
-            if type in mutClass[focusGene]:
-                for sample in mutClass[focusGene][type]:
-                    if sample not in missenseSamples:
-                        missenseSamples.append(sample)    
-        wList("%s.truncating.tab" % (focusGene), truncatingSamples)
-        wList("%s.missense.tab" % (focusGene), missenseSamples)
-        
-    
+            if type in mutClass[gene]:
+                for sample in mutClass[gene][type]:
+                    if sample[0:12] not in missSamples:
+                        missSamples.append(sample[0:12])
+        negSamples = list(set(negSamples) - (set(truncSamples) | set(missSamples)))
+        f.write("%s\t%s\t%s\t%s\t%s\n" % (gene, len(truncSamples), ",".join(truncSamples), ",".join(missSamples), ",".join(negSamples)))
+    f.close()
+
 if __name__ == "__main__":
     main(sys.argv[1:])

@@ -75,7 +75,7 @@ class Pathway:
 def rPathway(inf, reverse = False, retProteins = False, delim = "\t"):
     """read UCSC pathway format"""
     proteins = set()
-    readPathway = Pathway(dict(), dict())
+    readPathway = Pathway({}, {})
     f = open(inf, "r")
     for line in f:
         if line.isspace():
@@ -89,14 +89,14 @@ def rPathway(inf, reverse = False, retProteins = False, delim = "\t"):
         elif len(pline) == 3:
             if reverse:
                 if pline[1] not in readPathway.interactions:
-                    readPathway.interactions[pline[1]] = dict()
+                    readPathway.interactions[pline[1]] = {}
                 if pline[0] not in readPathway.interactions[pline[1]]:
                     readPathway.interactions[pline[1]][pline[0]] = pline[2]
                 else:
                     readPathway.interactions[pline[1]][pline[0]] += ";"+pline[2]
             else:
                 if pline[0] not in readPathway.interactions:
-                    readPathway.interactions[pline[0]] = dict()
+                    readPathway.interactions[pline[0]] = {}
                 if pline[1] not in readPathway.interactions[pline[0]]:
                     readPathway.interactions[pline[0]][pline[1]] = pline[2]
                 else:
@@ -161,7 +161,7 @@ def reverseInteractions(interactions):
 def getComponentMap(pNodes, pInteractions):
     """create the dictionary componentMap from interaction map"""
     rpInteractions = reverseInteractions(pInteractions)
-    componentMap = dict()
+    componentMap = {}
     for i in pNodes.keys():
         if pNodes[i] != "complex":
             continue
@@ -182,32 +182,33 @@ def constructInteractions(nodeList, refNodes, refInteractions):
             for j in refInteractions[i].keys():
                 if j in nodeList:
                     if i not in outPathway.interactions:
-                        outPathway.interactions[i] = dict()
+                        outPathway.interactions[i] = {}
                     outPathway.interactions[i][j] = refInteractions[i][j]
     return(outPathway.nodes, outPathway.interactions)
 
 def combinePathways(currentPathway, appendPathway, exclude = []):
     """combine Pathways"""
+    combinedPathway = deepcopy(currentPathway)
     for source in appendPathway.interactions.keys():
         if source in exclude:
             continue
-        if source not in currentPathway.nodes:
-            currentPathway.nodes[source] = appendPathway.nodes[source]
+        if source not in combinedPathway.nodes:
+            combinedPathway.nodes[source] = appendPathway.nodes[source]
         for target in appendPathway.interactions[source].keys():
             if target in exclude:
                 continue
-            if target not in currentPathway.nodes:
-                currentPathway.nodes[target] = appendPathway.nodes[target]
-            if source not in currentPathway.interactions:
-                currentPathway.interactions[source] = dict()
-            if target not in currentPathway.interactions[source]:
-                currentPathway.interactions[source][target] = appendPathway.interactions[source][target]
-    return(currentPathway)
+            if target not in combinedPathway.nodes:
+                combinedPathway.nodes[target] = appendPathway.nodes[target]
+            if source not in combinedPathway.interactions:
+                combinedPathway.interactions[source] = {}
+            if target not in combinedPathway.interactions[source]:
+                combinedPathway.interactions[source][target] = appendPathway.interactions[source][target]
+    return(combinedPathway)
 
 def sortConnected(inPathway):
     rinteractions = reverseInteractions(inPathway.interactions)
     index = 1
-    mapNets = dict()
+    mapNets = {}
     sortedNets = []
     seenNodes = set()
     for i in inPathway.nodes.keys():
@@ -233,7 +234,7 @@ def sortConnected(inPathway):
             mapNets[index] = deepcopy(currentNet)
             index += 1
     indexList = mapNets.keys()
-    netScore = dict()
+    netScore = {}
     for i in indexList:
         netScore[i] = len(mapNets[i])
     indexList.sort(lambda x, y: cmp(netScore[y], netScore[x]))
@@ -409,6 +410,13 @@ def shortestPath(source, target, interactions):
             log("ERROR: could not find path between %s and %s\n" % (source, target), die = True)
         allPaths = deepcopy(nextPaths)
     return (shortestPaths)
+
+def signPath(path, interactions):
+    sign = 1
+    for i in range(len(path)-1):
+        if interactions[path[i]][path[i+1]].endswith("|"):
+            sign *= -1
+    return(sign)
 
 def wNodeAttributes(pNodes, scoreMap = None, directory = "."):
     """write cytoscape node attribute files"""
@@ -826,7 +834,432 @@ def mean_std(inList, sample = True):
             std = 0.0
     return(mean, std)
 
-def ttest(values0, values1, alpha = 0.05):
+def getFeatureScores(dataFile, posSamples, negSamples, method = "variance",
+                     outFile = None):
+    """Computes feature scores for model selection"""
+    ## define specific functions
+    def scoreVariance(dataMatrix, useSamples):
+        scoreMap = {}
+        for feature in dataMatrix.columns:
+            scoreMap[feature] = mean_std([dataMatrix.get(feature, i) for i in useSamples],
+                                         sample = True)[1]
+        return(scoreMap)
+    def scoreTT(dataMatrix, posSamples, negSamples):
+        scoreMap = {}
+        for feature in dataMatrix.columns:
+            scoreMap[feature] = ttest([dataMatrix.get(feature, i) for i in negSamples],
+                                      [dataMatrix.get(feature, i) for i in posSamples])
+        return(scoreMap)
+    def scoreSVM(dataMatrix, posSamples, negSamples):
+        import liblinear
+        import liblinearutil
+        svmLabels = []
+        svmData = []
+        featureMap = {}
+        for sample in (posSamples + negSamples):
+            if sample in posSamples:
+                svmLabels.append(1)
+            else:
+                svmLabels.append(-1)
+            svmData.append({})
+            for i, feature in enumerate(dataMatrix.columns):
+                if i+1 not in featureMap:
+                    featureMap[i+1] = feature
+                try:
+                    svmData[-1][i+1] = dataMatrix.get(feature, sample)
+                except ValueError:
+                    svmData[-1][i+1] = 0.0
+        prob = liblinear.problem(svmLabels, svmData)
+        param = liblinear.parameter('-s 3 -c 5 -q')
+        liblinearutil.save_model('model_file', liblinearutil.train(prob, param))
+        # m = liblinearutil.train(prob, param)
+        # testLabels = [] ## like svmLabels
+        # testData = [] ## like svmData
+        # for i in range(len(testLabels)):
+        #     x0, max_idx = gen_feature_nodearray(testData[i])
+        #     label = liblinear.predict(m, x0)
+        #     if label == testLabels[i]:
+        #         print "correct!"
+        weights = rList("model_file")[6:]
+        scoreMap = {}
+        for feature in featureMap.keys():
+            scoreMap[featureMap[feature]] = float(weights[feature-1])
+        return (scoreMap)
+    def absScores(scoreMap):
+        absMap = {}
+        for feature in scoreMap.keys():
+            try:
+                fval = float(scoreMap[feature])
+                if fval != fval:
+                    raise ValueError
+                absMap[feature] = abs(fval)
+            except ValueError:
+                absMap[feature] = 0
+        return(absMap)
+    def rankScores(scoreMap):
+        rankMap = {}
+        features = []
+        for feature in scoreMap.keys():
+            try:
+                fval = float(scoreMap[feature])
+                if fval != fval:
+                    raise ValueError
+                features.append(feature)
+            except ValueError:
+                rankMap[feature] = 0
+        features.sort(lambda x, y: cmp(abs(scoreMap[x]),abs(scoreMap[y])))
+        for i, feature in enumerate(features):
+            rankMap[feature] = float(i+1)/len(features)
+        return(rankMap)
+    
+    ## read in data matrix
+    matData = DataMatrix(dataFile)
+    matFeatures = matData.columns
+    matSamples = matData.rows
+    
+    ## score features by supervision
+    nodeUnsigned = {}
+    nodeScore = {}
+    if method == "variance":
+        nodeUnsigned = scoreVariance(matData, posSamples+negSamples)
+        nodeScore = rankScores(nodeUnsigned)
+    elif method == "vsNon":
+        nodeUnsigned = scoreTT(matData, posSamples, negSamples)
+        nodeScore = rankScores(nodeUnsigned)
+    elif method == "vsNon_svm":
+        nodeUnsigned = scoreSVM(matData, posSamples, negSamples)
+        nodeScore = rankScores(nodeUnsigned)
+    elif method == "vsMin":
+        nodeUnsigned = scoreTT(matData, posSamples, negSamples)
+        nonScores = rankScores(nodeUnsigned)
+        varScores = rankScores(scoreVariance(matData, posSamples+negSamples))
+        for feature in list(set(nonScores.keys()) & set(varScores.keys())):
+            minVal = 1.0
+            valList = [nonScores[feature], varScores[feature]]
+            for i in valList:
+                try:
+                    if abs(i) < abs(minVal):
+                        minVal = i
+                except TypeError:
+                    pass
+            nodeScore[feature] = minVal
+    elif method == "vsMin_svm":
+        nodeUnsigned = scoreSVM(matData, posSamples, negSamples)
+        nonScores = rankScores(nodeUnsigned)
+        varScores = rankScores(scoreVariance(matData, posSamples+negSamples))
+        for feature in list(set(nonScores.keys()) & set(varScores.keys())):
+            minVal = 1.0
+            valList = [nonScores[feature], varScores[feature]]
+            for i in valList:
+                try:
+                    if abs(i) < abs(minVal):
+                        minVal = i
+                except TypeError:
+                    pass
+            nodeScore[feature] = minVal
+    elif method == "vsMax":
+        nodeUnsigned = scoreTT(matData, posSamples, negSamples)
+        nonScores = rankScores(nodeUnsigned)
+        varScores = rankScores(scoreVariance(matData, posSamples+negSamples))
+        for feature in list(set(nonScores.keys()) & set(varScores.keys())):
+            maxVal = 0.0
+            valList = [nonScores[feature], varScores[feature]]
+            for i in valList:
+                try:
+                    if abs(i) > abs(maxVal):
+                        maxVal = i
+                except TypeError:
+                    pass
+            nodeScore[feature] = maxVal
+    elif method == "vsMax_svm":
+        nodeUnsigned = scoreSVM(matData, posSamples, negSamples)
+        nonScores = rankScores(nodeUnsigned)
+        varScores = rankScores(scoreVariance(matData, posSamples+negSamples))
+        for feature in list(set(nonScores.keys()) & set(varScores.keys())):
+            maxVal = 0.0
+            valList = [nonScores[feature], varScores[feature]] 
+            for i in valList:
+                try:
+                    if abs(i) > abs(maxVal):
+                        maxVal = i
+                except TypeError:
+                    pass
+                nodeScore[feature] = maxVal
+    
+    ## output scores
+    if outFile:
+        o = open(outFile, "w")
+        o.write("id\tvalue\trank\n")
+        for feature in nodeScore:
+            o.write("%s\t%s\t%s\n" % (feature, nodeUnsigned[feature], nodeScore[feature]))
+        o.close()
+    return(nodeUnsigned, nodeScore)
+
+def identifyNeighborhoods(focusGene, globalPathway, maxDistance = 2):
+    """this"""
+    gNodes = globalPathway.nodes
+    fgInteractions = globalPathway.interactions
+    rgInteractions = reverseInteractions(fgInteractions)
+    
+    ## define specific functions
+    def globComplexes(focusGene, gNodes, fgInteractions, rgInteractions):
+        if focusGene not in fgInteractions:
+            return([], {})
+        complexes = []
+        for target in fgInteractions[focusGene]:
+            if fgInteractions[focusGene][target] == "component>":
+                complexes.append(target)
+        seenComplexes = set()
+        groupedComplexes = []
+        isDownstream = {}
+        while len(complexes) > 0:
+            currentComplex = complexes.pop(0)
+            isDownstream[currentComplex] = True
+            if currentComplex in seenComplexes:
+                continue
+            seenComplexes.update([currentComplex])
+            currentGroup = [currentComplex]
+            currentUnwalked = [currentComplex]
+            while len(currentUnwalked) > 0:
+                currentNode = currentUnwalked.pop(0)
+                if currentNode in fgInteractions:
+                    for target in fgInteractions[currentNode]:
+                        if fgInteractions[currentNode][target] == "component>" and gNodes[target] == "complex" and target not in seenComplexes:
+                            currentGroup.append(target)
+                            currentUnwalked.append(target)
+                            seenComplexes.update([target])
+                if currentNode in rgInteractions:
+                    for source in rgInteractions[currentNode]:
+                        if rgInteractions[currentNode][source] == "component>" and gNodes[source] == "complex" and source not in seenComplexes:
+                            currentGroup.append(source)
+                            currentUnwalked.append(source)
+                            seenComplexes.update([source])
+            groupedComplexes.append(currentGroup)
+        assignCount = 1
+        while assignCount > 0:
+            assignCount = 0
+            assignFeatures = isDownstream.keys()
+            for complex in assignFeatures:
+                if complex in fgInteractions:
+                    for target in fgInteractions[complex]:
+                        if target in seenComplexes and target not in isDownstream:
+                            isDownstream[target] = True
+                            assignCount += 1
+        for complex in seenComplexes:
+            if complex not in isDownstream:
+                isDownstream[complex] = False
+        return(groupedComplexes, isDownstream)
+    def searchUpstream(focusGene, focusFeatures, gNodes, rgInteractions, maxDistance = 2):
+        upstreamPathway = Pathway({focusGene : gNodes[focusGene]}, {})
+        upstreamFeatures = []
+        seenNodes = set(focusFeatures)
+        searchNodes = deepcopy(focusFeatures)
+        frontierNodes = []
+        for i in range(1, maxDistance+1):
+            while(len(searchNodes) > 0):
+                currentNode = searchNodes.pop(0)
+                if currentNode in rgInteractions:
+                    for source in rgInteractions[currentNode]:
+                        if source == focusGene:
+                            continue
+                        elif i == 1:
+                            if gNodes[source] == "abstract":
+                                continue
+                            elif rgInteractions[currentNode][source] == "component>":
+                                upstreamPathway.nodes[source] = gNodes[source]
+                                if source not in upstreamPathway.interactions:
+                                    upstreamPathway.interactions[source] = {}
+                                upstreamPathway.interactions[source][focusGene] = "-a>"
+                                upstreamFeatures.append(source)
+                                seenNodes.update([source])
+                                frontierNodes.append(source)
+                            elif rgInteractions[currentNode][source].startswith("-a"):
+                                upstreamPathway.nodes[source] = gNodes[source]
+                                if source not in upstreamPathway.interactions:
+                                    upstreamPathway.interactions[source] = {}
+                                upstreamPathway.interactions[source][focusGene] = rgInteractions[currentNode][source]
+                                upstreamFeatures.append(source)
+                                seenNodes.update([source])
+                                frontierNodes.append(source)
+                            elif rgInteractions[currentNode][source].startswith("-t"):
+                                upstreamPathway.nodes[source] = gNodes[source]
+                                if source not in upstreamPathway.interactions:
+                                    upstreamPathway.interactions[source] = {}
+                                upstreamPathway.interactions[source][focusGene] = rgInteractions[currentNode][source]
+                                seenNodes.update([source])
+                        elif source in upstreamPathway.nodes:
+                            upstreamPathway.interactions[source][currentNode] = rgInteractions[currentNode][source]
+                        else:
+                            if gNodes[source] == "abstract":
+                                continue
+                            else:
+                                upstreamPathway.nodes[source] = gNodes[source]
+                                if source not in upstreamPathway.interactions:
+                                    upstreamPathway.interactions[source] = {}
+                                upstreamPathway.interactions[source][currentNode] = rgInteractions[currentNode][source]
+                                upstreamFeatures.append(source)
+                                seenNodes.update([source])
+                                frontierNodes.append(source)
+            searchNodes = deepcopy(frontierNodes)
+        return(upstreamFeatures, upstreamPathway)
+    def searchDownstream(focusGene, focusFeatures, gNodes, fgInteractions, maxDistance = 2):
+        downstreamPathway = Pathway({focusGene : gNodes[focusGene]}, {})
+        downstreamFeatures = []
+        seenNodes = set(focusFeatures)
+        searchNodes = deepcopy(focusFeatures)
+        frontierNodes = []
+        for i in range(1, maxDistance+1):
+            while(len(searchNodes) > 0):
+                currentNode = searchNodes.pop(0)
+                if currentNode in fgInteractions:
+                    for target in fgInteractions[currentNode]:
+                        if target == focusGene:
+                            continue
+                        elif i == 1:
+                            if gNodes[target] == "abstract":
+                                continue
+                            elif fgInteractions[currentNode][target] == "component>":
+                                continue
+                            elif fgInteractions[currentNode][target].startswith("-a"):
+                                downstreamPathway.nodes[target] = gNodes[target]
+                                if focusGene not in downstreamPathway.interactions:
+                                    downstreamPathway.interactions[focusGene] = {}
+                                downstreamPathway.interactions[focusGene][target] = fgInteractions[currentNode][target]
+                                seenNodes.update([target])
+                                frontierNodes.append(target)
+                            elif fgInteractions[currentNode][target].startswith("-t"):
+                                downstreamPathway.nodes[target] = gNodes[target]
+                                if focusGene not in downstreamPathway.interactions:
+                                    downstreamPathway.interactions[focusGene] = {}
+                                downstreamPathway.interactions[focusGene][target] = fgInteractions[currentNode][target]
+                                downstreamFeatures.append(target)
+                                seenNodes.update([target])
+                        elif target in downstreamPathway.nodes:
+                            if currentNode not in downstreamPathway.interactions:
+                                downstreamPathway.interactions[currentNode] = {}
+                            downstreamPathway.interactions[currentNode][target] = fgInteractions[currentNode][target]
+                        else:
+                            if gNodes[target] == "abstract":
+                                continue
+                            else:
+                                downstreamPathway.nodes[target] = gNodes[target]
+                                if currentNode not in downstreamPathway.interactions:
+                                    downstreamPathway.interactions[currentNode] = {}
+                                downstreamPathway.interactions[currentNode][target] = fgInteractions[currentNode][target]
+                                if fgInteractions[currentNode][target].startswith("-t"):
+                                    downstreamFeatures.append(target)
+                                else:
+                                    frontierNodes.append(target)
+                                seenNodes.update([target])
+            searchNodes = deepcopy(frontierNodes)
+        return(downstreamFeatures, downstreamPathway)
+    
+    ## check if focusGene belongs to any complexes
+    (complexGroups, complexDownstream) = globComplexes(focusGene, gNodes, fgInteractions, rgInteractions)
+    
+    ## identify upstream and downstream of focusGene and complexes
+    focusPathways = []
+    (upstreamFeatures, upstreamPathway) = searchUpstream(focusGene, [focusGene], gNodes, rgInteractions, maxDistance = maxDistance)
+    (downstreamFeatures, downstreamPathway) = searchDownstream(focusGene, [focusGene], gNodes, fgInteractions, maxDistance = maxDistance)
+    focusPathways.append([[upstreamFeatures, upstreamPathway], [downstreamFeatures, downstreamPathway]])
+    for currentGroup in complexGroups:
+        currentDownstream = []
+        for complex in currentGroup:
+            if complexDownstream[complex]:
+                currentDownstream.append(complex)
+        (upstreamFeatures, upstreamPathway) = searchUpstream(focusGene, currentGroup, gNodes, rgInteractions, maxDistance = maxDistance)
+        (downstreamFeatures, downstreamPathway) = searchDownstream(focusGene, currentDownstream, gNodes, fgInteractions, maxDistance = maxDistance)
+        focusPathways.append([[upstreamFeatures, upstreamPathway], [downstreamFeatures, downstreamPathway]])
+    return(focusPathways)
+
+def selectMutNeighborhood(focusGene, nodeScore, upstreamFeatures, downstreamFeatures, upstreamBase, downstreamBase, threshold = 0.68, penalty = 0.01):
+    """performs simple univariate approach for selecting features with a threshold"""
+    upstreamPathway = Pathway({focusGene : upstreamBase.nodes[focusGene]}, {})
+    addedFeatures = []
+    log("## upstream\n", file = "selection.log")
+    rankFeatures = []
+    for feature in upstreamFeatures:
+        if feature in nodeScore:
+            rankFeatures.append(feature)
+            log("%s\t%s\n" % (feature, nodeScore[feature]), file = "selection.log")
+    rankFeatures.sort(lambda x, y: cmp(nodeScore[y],nodeScore[x]))
+    while (len(rankFeatures) > 0) and (len(addedFeatures) < 4 or nodeScore[rankFeatures[0]] >= threshold+penalty*len(addedFeatures)):
+        currentFeature = rankFeatures.pop(0)
+        log("-> %s\n" % (currentFeature), file = "selection.log")
+        addedFeatures.append(currentFeature)
+        addPaths = shortestPath(currentFeature, focusGene, upstreamBase.interactions)
+        for path in addPaths:
+            for i in range(len(path)-1):
+                upstreamPathway.nodes[path[i]] = upstreamBase.nodes[path[i]]
+                if path[i] not in upstreamPathway.interactions:
+                    upstreamPathway.interactions[path[i]] = {}
+                upstreamPathway.interactions[path[i]][path[i+1]] = upstreamBase.interactions[path[i]][path[i+1]]
+    downstreamPathway = Pathway({focusGene : downstreamBase.nodes[focusGene]}, {})
+    addedFeatures = []
+    log("## downstream\n", file = "selection.log")
+    rankFeatures = []
+    for feature in downstreamFeatures:
+        if feature in nodeScore:
+            rankFeatures.append(feature)
+            log("%s\t%s\n" % (feature, nodeScore[feature]), file = "selection.log")
+    rankFeatures.sort(lambda x, y: cmp(nodeScore[y],nodeScore[x]))
+    while (len(rankFeatures) > 0) and (len(addedFeatures) < 4 or nodeScore[rankFeatures[0]] >= threshold+penalty*len(addedFeatures)):
+        currentFeature = rankFeatures.pop(0)
+        log("-> %s\n" % (currentFeature), file = "selection.log")
+        addedFeatures.append(currentFeature)
+        addPaths = shortestPath(focusGene, currentFeature, downstreamBase.interactions)
+        for path in addPaths:
+            for i in range(len(path)-1):
+                downstreamPathway.nodes[path[i+1]] = downstreamBase.nodes[path[i+1]]
+                if path[i] not in downstreamPathway.interactions:
+                    downstreamPathway.interactions[path[i]] = {}
+                downstreamPathway.interactions[path[i]][path[i+1]] = downstreamBase.interactions[path[i]][path[i+1]]
+    return(upstreamPathway, downstreamPathway)
+
+def getConfusion(index, features, labelMap):
+    (tp, fn, fp, tn) = (0, 0, 0, 0)
+    for feature in features[:index]:
+        if labelMap[feature] == 1:
+            tp += 1
+        elif labelMap[feature] == 0:
+            fp += 1
+    for feature in features[index:]:
+        if labelMap[feature] == 1:
+            fn += 1
+        elif labelMap[feature] == 0:
+            tn += 1
+    return(tp, fn, fp, tn)
+
+def computeAUC(features, labelMap, scoreMap):
+    points = []
+    auc = 0.0
+    x = 0.0
+    index = 0
+    while (index <= len(features)):
+        (tp, fn, fp, tn) = getConfusion(index, features, labelMap)
+        try:
+            tpr = tp/float(tp+fn)
+            fpr = fp/float(fp+tn)
+        except ZeroDivisionError:
+            return("NA", [])
+        points.append( (fpr, tpr) )
+        if fpr > x:
+            dx = fpr - x
+            x = fpr
+            auc += dx*tpr
+        index += 1
+        if index < len(features):
+            while (scoreMap[features[index-1]] == scoreMap[features[index]]):
+                index += 1
+                if index == len(features):
+                    break
+        elif index == len(features):
+            pass
+        else:
+            break
+    return(auc, points)
+
+def ttest(values0, values1, alpha = 0.05, retDegrees = False):
     (mean0, std0) = mean_std(values0)
     (mean1, std1) = mean_std(values1)
     try:
@@ -835,7 +1268,11 @@ def ttest(values0, values1, alpha = 0.05):
         tval = "NA"
     except TypeError:
         tval = "NA"
-    return(tval)
+    if retDegrees:
+        df = (((std0**2)/len(values0)+(std1**2)/len(values1))**2)/((((std0**2)/len(values0))**2)/(len(values0)-1)+(((std1**2)/len(values1))**2)/(len(values1)-1))
+        return(tval, df)
+    else:
+        return(tval)
 
 def kstest(values0, values1):
     (mean0, std0) = mean_std(values0)
@@ -879,753 +1316,3 @@ def mutSeparation(group0, group1, data, method = "tt"):
         val = "NA"
     return(val)
 
-def absScores(scoreMap):
-    absMap = {}
-    for feature in scoreMap.keys():
-        try:
-            fval = float(scoreMap[feature])
-            if fval != fval:
-                raise ValueError
-            absMap[feature] = abs(fval)
-        except ValueError:
-            absMap[feature] = 0
-    return(absMap)
-
-def rankScores(scoreMap):
-    rankMap = {}
-    features = []
-    for feature in scoreMap.keys():
-        try:
-            fval = float(scoreMap[feature])
-            if fval != fval:
-                raise ValueError
-            features.append(feature)
-        except ValueError:
-            rankMap[feature] = 0
-    features.sort(lambda x, y: cmp(abs(scoreMap[x]),abs(scoreMap[y])))
-    for i, feature in enumerate(features):
-        rankMap[feature] = float(i+1)/len(features)
-    return(rankMap)
-
-def scoreSVM(matData, posSamples, negSamples):
-    import liblinear
-    import liblinearutil
-    svmLabels = []
-    svmData = []
-    featureMap = {}
-    for sample in (posSamples + negSamples):
-        if sample in posSamples:
-            svmLabels.append(1)
-        else:
-            svmLabels.append(-1)
-        svmData.append({})
-        for i, feature in enumerate(matData.keys()):
-            if i+1 not in featureMap:
-                featureMap[i+1] = feature
-            try:
-                svmData[-1][i+1] = float(matData[feature][sample])
-            except ValueError:
-                svmData[-1][i+1] = 0.0
-    prob = liblinear.problem(svmLabels, svmData)
-    param = liblinear.parameter('-s 3 -c 5 -q')
-    liblinearutil.save_model('model_file', liblinearutil.train(prob, param))
-    # m = liblinearutil.train(prob, param)
-    # testLabels = [] ## like svmLabels
-    # testData = [] ## like svmData
-    # for i in range(len(testLabels)):
-    #     x0, max_idx = gen_feature_nodearray(testData[i])
-    #     label = liblinear.predict(m, x0)
-    #     if label == testLabels[i]:
-    #         print "correct!"
-    weights = rList("model_file")[6:]
-    scoreMap = {}
-    for feature in featureMap.keys():
-        scoreMap[featureMap[feature]] = float(weights[feature-1])
-    return (scoreMap)
-
-def scoreTT(matData, posSamples, negSamples):
-    scoreMap = {}
-    for feature in matData.keys():
-        scoreMap[feature] = ttest([matData[feature][i] for i in negSamples], [matData[feature][i] for i in posSamples])
-    return(scoreMap)
-
-def scoreTT_dm(dataMatrix, posSamples, negSamples):
-    scoreMap = {}
-    for feature in dataMatrix.columns:
-        scoreMap[feature] = ttest([dataMatrix.get(feature, i) for i in negSamples], [dataMatrix.get(feature, i) for i in posSamples])
-    return(scoreMap)
-
-def scoreVariance(matData, matSamples):
-    scoreMap = {}
-    for feature in matData.keys():
-        scoreMap[feature] = mean_std([matData[feature][i] for i in matSamples], sample = True)[1]
-    return(scoreMap)
-
-def selectMutationNeighborhood(focusGene, mutSamples, dataFile, gPathway, trainSamples = None, tCutoff = 0.68, tIncrement = 0.05 , maxDistance = 2, method = "vsZero"):
-    """performs simple univariate approach for selecting features with a threshold"""
-    ## load data
-    matData = DataMatrix(dataFile)
-    matFeatures = matData.columns
-    matSamples = matData.rows
-    # (matData, matFeatures, matSamples) = rCRSData(dataFile, retFeatures = True)
-    if trainSamples is not None and method != "variance":
-        matSamples = list(set(matSamples) & set(trainSamples))
-    mutatedSamples = list(set(mutSamples) & set(matSamples))
-    nonSamples = list(set(matSamples) - set(mutSamples))
-    permuteSamples = ["perm_%s" % (i) for i in mutatedSamples]
-    
-    ## score features by supervision
-    nodeUnsigned = {}
-    nodeScore = {}
-    if method == "vsNon_svm":
-        nodeUnsigned = scoreSVM(matData, mutatedSamples, nonSamples)
-        nodeScore = rankScores(nodeUnsigned)
-    if method == "vsPerm_svm":
-        nodeUnsigned = scoreSVM(matData, mutatedSamples, permuteSamples)
-        nodeScore = rankScores(nodeUnsigned)
-    elif method == "vsNon":
-        #nodeUnsigned = scoreTT(matData, mutatedSamples, nonSamples)
-        nodeUnsigned = scoreTT_dm(matData, mutatedSamples, nonSamples)
-        nodeScore = rankScores(nodeUnsigned)
-    elif method == "vsPerm":
-        nodeUnsigned = scoreTT(matData, mutatedSamples, permuteSamples)
-        nodeScore = rankScores(nodeUnsigned)
-    elif method == "variance":
-        nodeUnsigned = scoreVariance(matData, matSamples)
-        nodeScore = rankScores(nodeUnsigned)
-    elif method == "vsMin":
-        nonScores = rankScores(scoreTT(matData, mutatedSamples, nonSamples))
-        varScores = rankScores(scoreVariance(matData, matSamples))
-        for feature in list(set(nonScores.keys()) & set(varScores.keys())):
-            minVal = 1.0
-            valList = [nonScores[feature], varScores[feature]]
-            for i in valList:
-                try:
-                    if abs(i) < abs(minVal):
-                        minVal = i
-                except TypeError:
-                    pass
-            nodeUnsigned[feature] = minVal
-            nodeScore[feature] = minVal
-    elif method == "vsMin_svm":
-        nonScores = rankScores(scoreSVM(matData, mutatedSamples, nonSamples))
-        varScores = rankScores(scoreVariance(matData, matSamples))
-        for feature in list(set(nonScores.keys()) & set(varScores.keys())):
-            minVal = 1.0
-            valList = [nonScores[feature], varScores[feature]]
-            for i in valList:
-                try:
-                    if abs(i) < abs(minVal):
-                        minVal = i
-                except TypeError:
-                    pass
-            nodeUnsigned[feature] = minVal
-            nodeScore[feature] = minVal
-    elif method == "vsMax":
-        nonScores = rankScores(scoreTT(matData, mutatedSamples, nonSamples))
-        varScores = rankScores(scoreVariance(matData, matSamples))
-        for feature in list(set(nonScores.keys()) & set(varScores.keys())):
-            maxVal = 0.0
-            valList = [nonScores[feature], varScores[feature]]
-            for i in valList:
-                try:
-                    if abs(i) > abs(maxVal):
-                        maxVal = i
-                except TypeError:
-                    pass
-            nodeUnsigned[feature] = maxVal
-            nodeScore[feature] = maxVal
-    elif method == "vsMax_svm":
-        nonScores = rankScores(scoreSVM(matData, mutatedSamples, nonSamples))
-        varScores = rankScores(scoreVariance(matData, matSamples))
-        for feature in list(set(nonScores.keys()) & set(varScores.keys())):
-            maxVal = 0.0
-            valList = [nonScores[feature], varScores[feature]] 
-            for i in valList:
-                try:
-                    if abs(i) > abs(maxVal):
-                        maxVal = i
-                except TypeError:
-                    pass
-                nodeUnsigned[feature] = maxVal
-                nodeScore[feature] = maxVal
-    
-    ## initialize up and down pathways
-    rinteractions = reverseInteractions(gPathway.interactions)
-    upPathway = Pathway({focusGene : gPathway.nodes[focusGene]}, {})
-    downPathway = Pathway({focusGene : gPathway.nodes[focusGene]}, {})
-    coreNodes = set([focusGene])
-    ## include complexes of focusGene
-    if focusGene in gPathway.interactions:
-        for target in gPathway.interactions[focusGene].keys():
-            if gPathway.interactions[focusGene][target] == "component>":
-                ## add complex to upstream pathway
-                upPathway.nodes[target] = gPathway.nodes[target]
-                if focusGene not in upPathway.interactions:
-                    upPathway.interactions[focusGene] = {}
-                upPathway.interactions[focusGene][target] = gPathway.interactions[focusGene][target]
-                ## add complex to downstream pathway
-                downPathway.nodes[target] = gPathway.nodes[target]
-                if focusGene not in downPathway.interactions:
-                    downPathway.interactions[focusGene] = {}
-                downPathway.interactions[focusGene][target] = gPathway.interactions[focusGene][target]
-                coreNodes.update([target])
-    wPathway("core_pathway.tab", upPathway.nodes, upPathway.interactions)
-    
-    ## get frontier nodes up and down
-    frontierUp = set()
-    frontierDown = set()
-    for node in upPathway.nodes.keys():
-        frontierUp = frontierUp | set(getUpstream(node, maxDistance, gPathway.interactions))
-        frontierDown = frontierDown | set(getDownstream(node, maxDistance, gPathway.interactions))
-    commonSet = frontierUp & frontierDown
-    # frontierUp = frontierUp - commonSet ###
-    # frontierDown = frontierDown - commonSet ###
-    frontierUp = list(frontierUp - set([focusGene]))
-    frontierDown = list(frontierDown - set([focusGene]))
-    f = open("supervised.score", "w")
-    for node in frontierUp:
-        if node not in nodeScore:
-            nodeScore[node] = -1
-            nodeUnsigned[node] = "NA"
-        f.write("%s\t%s\t%s\t+\n" % (node, nodeScore[node], nodeUnsigned[node]))
-    for node in frontierDown:
-        if node not in nodeScore:
-            nodeScore[node] = -1
-            nodeUnsigned[node] = "NA"
-        f.write("%s\t%s\t%s\t-\n" % (node, nodeScore[node], nodeUnsigned[node]))
-    f.close()
-    frontierUp.sort(lambda x, y: cmp(nodeScore[y],nodeScore[x]))
-    frontierDown.sort(lambda x, y: cmp(nodeScore[y],nodeScore[x]))
-    
-    ## add upPathway features by score
-    count = 0
-    hasUpstream = False
-    tThresh = tCutoff
-    for node in frontierUp:
-        if ((count < 4) and (nodeScore[node] > 0)) or (nodeScore[node] > tThresh):
-            addPaths = shortestPath(node, focusGene, gPathway.interactions)
-            for currPath in addPaths:
-                currPath.reverse()
-                # skipPath = False ###
-                # for addNode in currPath:
-                #     if addNode not in (set(frontierUp) | set([focusGene])):
-                #         skipPath = True
-                # if skipPath:
-                #     continue
-                for addNode in currPath:
-                    if addNode in upPathway.nodes:
-                        continue
-                    upPathway.nodes[addNode] = gPathway.nodes[addNode]
-                    upPathway.interactions[addNode] = {}
-                    if addNode in gPathway.interactions:
-                        for target in gPathway.interactions[addNode].keys():
-                            if target in upPathway.nodes:
-                                if gPathway.interactions[addNode][target] == "-ca>":
-                                    upPathway.interactions[addNode][target] = "-a>"
-                                else:
-                                    upPathway.interactions[addNode][target] = gPathway.interactions[addNode][target] 
-                    if addNode in rinteractions:
-                        for source in rinteractions[addNode].keys():
-                            if source in upPathway.nodes and source not in coreNodes:
-                                if gPathway.interactions[source][addNode] == "-ca>":
-                                    upPathway.interactions[source][addNode] = "-a>"
-                                else:
-                                    upPathway.interactions[source][addNode] = gPathway.interactions[source][addNode] 
-                    if addNode in matFeatures:
-                        tThresh += tIncrement
-                        count += 1
-    if count >= 3:
-        hasUpstream = True
-    
-    ## add downPathway features by score
-    count = 0
-    hasDownstream = False
-    tThresh = tCutoff
-    for node in frontierDown:
-        if ((count < 4) and (nodeScore[node] > 0)) or (nodeScore[node] > tThresh):
-            addPaths = shortestPath(focusGene, node, gPathway.interactions)
-            ## require at least 1 terminal transciption
-            hasTranscriptional = False
-            for currPath in addPaths:
-                if gPathway.interactions[currPath[-2]][currPath[-1]].startswith("-t"):
-                    hasTranscriptional = True
-            if not hasTranscriptional:
-                continue
-            for currPath in addPaths:
-                illegalPath = False
-                for index in range(len(currPath)-1):
-                    if gPathway.interactions[currPath[index]][currPath[index+1]].startswith("-ca>"):
-                        illegalPath = True
-                if illegalPath:
-                    continue
-                for addNode in currPath:
-                    if addNode in downPathway.nodes:
-                        continue
-                    downPathway.nodes[addNode] = gPathway.nodes[addNode]
-                    if addNode in rinteractions:
-                        for source in rinteractions[addNode].keys():
-                            if source in downPathway.nodes:
-                                if gPathway.interactions[source][addNode].startswith("-ca>"):
-                                    pass
-                                else:
-                                    if source not in downPathway.interactions:
-                                        downPathway.interactions[source] = {}
-                                    downPathway.interactions[source][addNode] = gPathway.interactions[source][addNode]
-                                    if gPathway.interactions[source][addNode].startswith("-t"):
-                                        tThresh += tIncrement
-                                        count += 1
-                    if addNode in gPathway.interactions:
-                        for target in gPathway.interactions[addNode].keys():
-                            if target in downPathway.nodes and target not in coreNodes:
-                                if gPathway.interactions[addNode][target].startswith("-ca>"):
-                                    pass
-                                else:
-                                    if addNode not in downPathway.interactions:
-                                        downPathway.interactions[addNode] = {}
-                                    downPathway.interactions[addNode][target] = gPathway.interactions[addNode][target] 
-    if count >= 3:
-        hasDownstream = True
-    return(upPathway, downPathway, hasUpstream and hasDownstream)
-
-def selectMutationNeighborhood_previous(focusGene, mutSamples, dataFile, gPathway, trainSamples = None, tCutoff = 2.0, tIncrement = 0.5 , maxDistance = 2, method = "vsZero"):
-    """performs simple univariate approach for selecting features with a threshold"""
-    ## load data
-    (matData, matFeatures, matSamples) = rCRSData(dataFile, retFeatures = True)
-    if trainSamples is not None and method != "variance":
-        matSamples = list(set(matSamples) & set(trainSamples))
-    mutatedSamples = list(set(mutSamples) & set(matSamples))
-    nonSamples = list(set(matSamples) - set(mutSamples))
-    permuteSamples = ["perm_%s" % (i) for i in mutatedSamples]
-    
-    ## score features by supervision
-    nodeUnsigned = {}
-    nodeScore = {}
-    if method == "vsNon_svm":
-        nodeUnsigned = scoreSVM(matData, mutatedSamples, nonSamples)
-        nodeScore = rankScores(nodeUnsigned)
-    if method == "vsPerm_svm":
-        nodeUnsigned = scoreSVM(matData, mutatedSamples, permuteSamples)
-        nodeScore = rankScores(nodeUnsigned)
-    elif method == "vsNon":
-        nodeUnsigned = scoreTT(matData, mutatedSamples, nonSamples)
-        nodeScore = rankScores(nodeUnsigned)
-    elif method == "vsPerm":
-        nodeUnsigned = scoreTT(matData, mutatedSamples, permuteSamples)
-        nodeScore = rankScores(nodeUnsigned)
-    elif method == "variance":
-        nodeUnsigned = scoreVariance(matData, matSamples)
-        nodeScore = rankScores(nodeUnsigned)
-    elif method == "vsMin":
-        nonScores = rankScores(scoreTT(matData, mutatedSamples, nonSamples))
-        varScores = rankScores(scoreVariance(matData, matSamples))
-        for feature in list(set(nonScores.keys()) & set(varScores.keys())):
-            minVal = 1.0
-            valList = [nonScores[feature], varScores[feature]]
-            for i in valList:
-                try:
-                    if abs(i) < abs(minVal):
-                        minVal = i
-                except TypeError:
-                    pass
-            nodeUnsigned[feature] = minVal
-            nodeScore[feature] = minVal
-    elif method == "vsMin_svm":
-        nonScores = rankScores(scoreSVM(matData, mutatedSamples, nonSamples))
-        varScores = rankScores(scoreVariance(matData, matSamples))
-        for feature in list(set(nonScores.keys()) & set(varScores.keys())):
-            minVal = 1.0
-            valList = [nonScores[feature], varScores[feature]]
-            for i in valList:
-                try:
-                    if abs(i) < abs(minVal):
-                        minVal = i
-                except TypeError:
-                    pass
-            nodeUnsigned[feature] = minVal
-            nodeScore[feature] = minVal
-    elif method == "vsMax":
-        nonScores = rankScores(scoreTT(matData, mutatedSamples, nonSamples))
-        varScores = rankScores(scoreVariance(matData, matSamples))
-        for feature in list(set(nonScores.keys()) & set(varScores.keys())):
-            maxVal = 0.0
-            valList = [nonScores[feature], varScores[feature]]
-            for i in valList:
-                try:
-                    if abs(i) > abs(maxVal):
-                        maxVal = i
-                except TypeError:
-                    pass
-            nodeUnsigned[feature] = maxVal
-            nodeScore[feature] = maxVal
-    elif method == "vsMax_svm":
-        nonScores = rankScores(scoreSVM(matData, mutatedSamples, nonSamples))
-        varScores = rankScores(scoreVariance(matData, matSamples))
-        for feature in list(set(nonScores.keys()) & set(varScores.keys())):
-            maxVal = 0.0
-            valList = [nonScores[feature], varScores[feature]] 
-            for i in valList:
-                try:
-                    if abs(i) > abs(maxVal):
-                        maxVal = i
-                except TypeError:
-                    pass
-                nodeUnsigned[feature] = maxVal
-                nodeScore[feature] = maxVal
-    
-    ## initialize up and down pathways
-    rinteractions = reverseInteractions(gPathway.interactions)
-    upPathway = Pathway({focusGene : gPathway.nodes[focusGene]}, {})
-    downPathway = Pathway({focusGene : gPathway.nodes[focusGene]}, {})
-    coreNodes = set([focusGene])
-    ## include complexes of focusGene
-    if focusGene in gPathway.interactions:
-        for target in gPathway.interactions[focusGene].keys():
-            if gPathway.interactions[focusGene][target] == "component>":
-                ## add complex to upstream pathway
-                upPathway.nodes[target] = gPathway.nodes[target]
-                if focusGene not in upPathway.interactions:
-                    upPathway.interactions[focusGene] = {}
-                upPathway.interactions[focusGene][target] = gPathway.interactions[focusGene][target]
-                ## add complex to downstream pathway
-                downPathway.nodes[target] = gPathway.nodes[target]
-                if focusGene not in downPathway.interactions:
-                    downPathway.interactions[focusGene] = {}
-                downPathway.interactions[focusGene][target] = gPathway.interactions[focusGene][target]
-                coreNodes.update([target])
-    wPathway("core_pathway.tab", upPathway.nodes, upPathway.interactions)
-    
-    ## get frontier nodes up and down
-    frontierUp = set()
-    frontierDown = set()
-    for node in upPathway.nodes.keys():
-        frontierUp = frontierUp | set(getUpstream(node, maxDistance, gPathway.interactions))
-        frontierDown = frontierDown | set(getDownstream(node, maxDistance, gPathway.interactions))
-    frontierUp = frontierUp - frontierDown ##
-    frontierUp = list(frontierUp - set([focusGene]))
-    frontierDown = list(frontierDown - set([focusGene]))
-    f = open("supervised.score", "w")
-    for node in frontierUp:
-        if node not in nodeScore:
-            nodeScore[node] = -1
-            nodeUnsigned[node] = "NA"
-        f.write("%s\t%s\t%s\t+\n" % (node, nodeScore[node], nodeUnsigned[node]))
-    for node in frontierDown:
-        if node not in nodeScore:
-            nodeScore[node] = -1
-            nodeUnsigned[node] = "NA"
-        f.write("%s\t%s\t%s\t-\n" % (node, nodeScore[node], nodeUnsigned[node]))
-    f.close()
-    frontierUp.sort(lambda x, y: cmp(nodeScore[y],nodeScore[x]))
-    frontierDown.sort(lambda x, y: cmp(nodeScore[y],nodeScore[x]))
-    
-    ## add upPathway features by score
-    count = 0
-    hasUpstream = False
-    tThresh = tCutoff
-    for node in frontierUp:
-        if ((count < 4) and (nodeScore[node] > 0)) or (nodeScore[node] > tThresh):
-            addPaths = shortestPath(node, focusGene, gPathway.interactions)
-            for currPath in addPaths:
-                currPath.reverse()
-                for addNode in currPath:
-                    if addNode in upPathway.nodes:
-                        continue
-                    upPathway.nodes[addNode] = gPathway.nodes[addNode]
-                    upPathway.interactions[addNode] = {}
-                    if addNode in gPathway.interactions:
-                        for target in gPathway.interactions[addNode].keys():
-                            if target in upPathway.nodes:
-                                upPathway.interactions[addNode][target] = gPathway.interactions[addNode][target] 
-                    if addNode in rinteractions:
-                        for source in rinteractions[addNode].keys():
-                            if source in upPathway.nodes and source not in coreNodes:
-                                upPathway.interactions[source][addNode] = gPathway.interactions[source][addNode] 
-                    if addNode in matFeatures:
-                        tThresh += tIncrement
-                        count += 1
-    if count >= 4:
-        hasUpstream = True
-    
-    ## add downPathway features by score
-    count = 0
-    hasDownstream = False
-    tThresh = tCutoff
-    for node in frontierDown:
-        if ((count < 4) and (nodeScore[node] > 0)) or (nodeScore[node] > tThresh):
-            addPaths = shortestPath(focusGene, node, gPathway.interactions)
-            for currPath in addPaths:
-                for addNode in currPath:
-                    if addNode in downPathway.nodes:
-                        continue
-                    downPathway.nodes[addNode] = gPathway.nodes[addNode]
-                    if addNode in rinteractions:
-                        for source in rinteractions[addNode].keys():
-                            if source in downPathway.nodes:
-                                if source not in downPathway.interactions:
-                                    downPathway.interactions[source] = {}
-                                downPathway.interactions[source][addNode] = gPathway.interactions[source][addNode]
-                                if gPathway.interactions[source][addNode].startswith("-t"):
-                                    tThresh += tIncrement
-                                    count += 1
-                    if addNode in gPathway.interactions:
-                        for target in gPathway.interactions[addNode].keys():
-                            if target in downPathway.nodes and target not in coreNodes:
-                                if addNode not in downPathway.interactions:
-                                    downPathway.interactions[addNode] = {}
-                                downPathway.interactions[addNode][target] = gPathway.interactions[addNode][target] 
-    if count >= 4:
-        hasDownstream = True
-    
-    ## output pathway
-    wPathway("upstream_pathway.tab", upPathway.nodes, upPathway.interactions)
-    wPathway("downstream_pathway.tab", downPathway.nodes, downPathway.interactions)
-    return(upPathway, downPathway, hasUpstream and hasDownstream)
-
-def shiftCV(mutatedGene, mutatedSamples, dataSamples, trainSamples, uPathway, dPathway, 
-            nNulls = 10, msepMethod = "tt", alpha = 0.05, mutsigFile = None):
-    ## define sample groups
-    trainGroup = trainSamples
-    testGroup = list(set(dataSamples) - set(trainSamples))
-    mutGroup = mutatedSamples
-    nonGroup = list(set(dataSamples) - set(mutatedSamples))
-    permGroup = ["perm_%s" % (sample) for sample in mutGroup]
-    mutGroup_tr = list(set(mutGroup) & set(trainGroup))
-    mutGroup_te = list(set(mutGroup) & set(testGroup))
-    nonGroup_tr = list(set(nonGroup) & set(trainGroup))
-    nonGroup_te = list(set(nonGroup) & set(testGroup))
-    permGroup_tr = ["perm_%s" % (sample) for sample in mutGroup_tr]
-    permGroup_te = ["perm_%s" % (sample) for sample in mutGroup_te]
-    backGroup = []
-    for sample in mutGroup:
-        for null in range(1, nNulls+1):
-            backGroup.append("null%s_%s" % (null, sample))
-    
-    ## read paradigm output
-    upScore = rPARADIGM("%s_upstream.fa" % (mutatedGene), useRows = uPathway.nodes.keys())[1]
-    downScore = rPARADIGM("%s_downstream.fa" % (mutatedGene), useRows = dPathway.nodes.keys())[1]
-    wCRSData("paradigm_up.tab", upScore)
-    wCRSData("paradigm_down.tab", downScore)
-    n_upScore = {}
-    n_downScore = {}
-    for null in range(1, nNulls+1):
-        if os.path.exists("N%s_%s_upstream.fa" % (null, mutatedGene)):
-            n_upScore[null] = rPARADIGM("N%s_%s_upstream.fa" % (null, mutatedGene), useRows = [mutatedGene])[1]
-        if os.path.exists("N%s_%s_downstream.fa" % (null, mutatedGene)):
-            n_downScore[null] = rPARADIGM("N%s_%s_downstream.fa" % (null, mutatedGene), useRows = [mutatedGene])[1]
-    
-    ## score shifts
-    shiftScore = {}
-    for sample in (mutGroup + nonGroup + permGroup):
-        if (sample in downScore) and (sample in upScore):
-            shiftScore[sample] = downScore[sample][mutatedGene] - upScore[sample][mutatedGene]
-    for sample in (mutGroup + nonGroup + permGroup):
-        if (sample in downScore) and (sample in upScore):
-            for null in range(1, nNulls+1):
-                shiftScore["null%s_%s" % (null, sample)] = n_downScore[null][sample][mutatedGene] - n_upScore[null][sample][mutatedGene]
-    
-    ## output scores if just applying model
-    if len(trainSamples) == 0:
-        f = open("shift.tab", "w")
-        for sample in dataSamples:
-            f.write("%s\t%s\n" % (sample, shiftScore[sample]))
-        f.close()
-        return
-    
-    ## output files for circle maps
-    f = open("include.samples", "w")
-    for sample in (mutGroup_tr + nonGroup_tr):
-        f.write("%s\n" % (sample))
-    f.close()
-    f = open("up.features", "w")
-    for feature in (set(upScore[upScore.keys()[0]].keys()) - set([mutatedGene])):
-        f.write("%s\n" % (feature))
-    f.close()
-    f = open("down.features", "w")
-    for feature in (set(downScore[downScore.keys()[0]].keys()) - set([mutatedGene])):
-        f.write("%s\n" % (feature))
-    f.close()
-    f = open("mut.features", "w")
-    f.write("%s\n" % (mutatedGene))
-    f.close()
-    f = open("mut.circle", "w")
-    f.write("## 0=255,255,255 1=0,0,0 0.5=150,150,150\n")
-    f.write("id")
-    for sample in (mutGroup_tr + nonGroup_tr + permGroup_tr):
-        if sample not in shiftScore:
-            continue
-        f.write("\t%s" % (sample))
-    f.write("\n")
-    f.write("*")
-    for sample in (mutGroup_tr + nonGroup_tr + permGroup_tr):
-        if sample not in shiftScore:
-            continue
-        if sample in mutGroup:
-            f.write("\t1")
-        elif sample in nonGroup:
-            f.write("\t0")
-        else:
-            f.write("\t0.5")
-    f.write("\n")
-    f.close()
-    f = open("shift.circle", "w")
-    f.write("id")
-    for sample in (mutGroup_tr + nonGroup_tr + permGroup_tr):
-        if sample not in shiftScore:
-            continue
-        f.write("\t%s" % (sample))
-    f.write("\n")
-    f.write("*")
-    for sample in (mutGroup_tr + nonGroup_tr + permGroup_tr):
-        if sample not in shiftScore:
-            continue
-        f.write("\t%s" % (shiftScore[sample]))
-    f.write("\n")
-    f.close()
-    
-    ## compute CV statistics
-    if len(list(set(nonGroup_tr) & set(shiftScore.keys()))) > 0:
-        (nonMean, nonStd) = mean_std([shiftScore[sample] for sample in nonGroup_tr])
-    if len(list(set(permGroup_tr) & set(shiftScore.keys()))) > 0:
-        (permMean, permStd) = mean_std([shiftScore[sample] for sample in permGroup_tr])
-    labelMap = {}
-    nonScore_tr = {}
-    nonScore_te = {}
-    o = open("pshift.train.tab", "w")
-    o.write("> %s\tP-Shifts:Table\n" % (mutatedGene))
-    o.write("# sample\tclass\tP-Shift\n")
-    f = open("mut.train.scores", "w")
-    for sample in mutGroup_tr:
-        labelMap[sample] = 1
-        nonScore_tr[sample] = (shiftScore[sample]-nonMean)
-        o.write("%s\t+\t%s\n" % (sample, nonScore_tr[sample]))
-        f.write("%s\t%s\n" % (sample, nonScore_tr[sample]))
-    f.close()
-    f = open("non.train.scores", "w")
-    for sample in nonGroup_tr:
-        labelMap[sample] = 0
-        nonScore_tr[sample] = (shiftScore[sample]-nonMean)
-        o.write("%s\t-\t%s\n" % (sample, nonScore_tr[sample]))
-        f.write("%s\t%s\n" % (sample, nonScore_tr[sample]))
-    f.close()
-    o.close()
-    o = open("pshift.test.tab", "w")
-    o.write("> %s\tP-Shifts:Table\n" % (mutatedGene))
-    o.write("# sample\tclass\tP-Shift\n")
-    f = open("mut.test.scores", "w")
-    for sample in mutGroup_te:
-        labelMap[sample] = 1
-        nonScore_te[sample] = (shiftScore[sample]-nonMean)
-        o.write("%s\t+\t%s\n" % (sample, nonScore_te[sample]))
-        f.write("%s\t%s\n" % (sample, nonScore_te[sample]))
-    f.close()
-    f = open("non.test.scores", "w")
-    for sample in nonGroup_te:
-        labelMap[sample] = 0
-        nonScore_te[sample] = (shiftScore[sample]-nonMean)
-        o.write("%s\t-\t%s\n" % (sample, nonScore_te[sample]))
-        f.write("%s\t%s\n" % (sample, nonScore_te[sample]))
-    f.close()
-    o.close()
-    
-    ## compute auc from stats
-    sorted_tr = nonScore_tr.keys()
-    sorted_tr.sort(lambda x, y: cmp(nonScore_tr[y],nonScore_tr[x]))
-    auc_tr = computeAUC(sorted_tr, labelMap, nonScore_tr)[0]
-    if len(testGroup) > 0:
-        sorted_te = nonScore_te.keys()
-        sorted_te.sort(lambda x, y: cmp(nonScore_te[y],nonScore_te[x]))
-        auc_te = computeAUC(sorted_te, labelMap, nonScore_te)[0]
-    else:
-        auc_te = "NA"
-    f = open("auc.stat", "w")
-    f.write("%s\t%s\n" % (auc_tr, auc_te))
-    f.close()
-    
-    ## compute mutant separation
-    if auc_tr != "NA":
-        msepScore = {}
-        msepScore["real"] = mutSeparation(nonGroup_tr, mutGroup_tr, shiftScore, method = msepMethod)
-        for null in range(1, nNulls+1):
-            msepScore["null%s" % (null)] = mutSeparation(["null%s_%s" % (null, sample) 
-                                                         for sample in nonGroup_tr],
-                                                         ["null%s_%s" % (null, sample)
-                                                         for sample in mutGroup_tr],
-                                                         shiftScore, method = msepMethod)
-        f = open("real.scores", "w")
-        f.write("%s\n" % (msepScore["real"]))
-        f.close()
-        f = open("null.scores", "w")
-        for null in range(1, nNulls+1):
-            f.write("%s\n" % (msepScore["null%s" % (null)]))
-        f.close()
-    
-        ## compute background significance
-        realScores = [msepScore["real"]]
-        nullScores = [msepScore[null] for null in list(set(msepScore.keys()) - set(["real"]))]
-        (nullMean, nullStd) = mean_std(nullScores)
-        significanceScore = (realScores[0]-nullMean)/(nullStd+alpha)
-        
-        ## output sig.stats
-        mutsigData = {}
-        if mutsigFile is not None:
-            mutsigData = rCRSData(mutsigFile)["p"]
-        if mutatedGene in mutsigData:
-            mutVal = mutsigData[mutatedGene]
-        else:
-            mutVal = "NA"
-        f = open("sig.tab", "w")
-        f.write("# gene\tnon_mut\tmut\tmsep\tsignificance\tmutSig\n")
-        f.write("%s\t%s\t%s\t%s\t%s\t%s\n" % (mutatedGene, len(nonGroup_tr), len(mutGroup_tr), 
-                                          msepScore["real"], significanceScore, 
-                                          str(mutVal).lstrip("<")))
-        f.close()
-    else:
-        f = open("sig.tab", "w")
-        f.write("# gene\tnon_mut\tmut\tmsep\tsignificance\tmutSig\n")
-        f.write("%s\t%s\t%s\t%s\t%s\t%s\n" % (mutatedGene, len(nonGroup_tr), len(mutGroup_tr),
-                                              "NA", "NA", "NA")) 
-        f.close()
-
-def computeAUC(features, labelMap, scoreMap):
-    points = []
-    auc = 0.0
-    x = 0.0
-    index = 0
-    while (index <= len(features)):
-        (tp, fn, fp, tn) = getConfusion(index, features, labelMap)
-        try:
-            tpr = tp/float(tp+fn)
-            fpr = fp/float(fp+tn)
-        except ZeroDivisionError:
-            return("NA", [])
-        points.append( (fpr, tpr) )
-        if fpr > x:
-            dx = fpr - x
-            x = fpr
-            auc += dx*tpr
-        index += 1
-        if index < len(features):
-            while (scoreMap[features[index-1]] == scoreMap[features[index]]):
-                index += 1
-                if index == len(features):
-                    break
-        elif index == len(features):
-            pass
-        else:
-            break
-    return(auc, points)
-
-def getConfusion(index, features, labelMap):
-    (tp, fn, fp, tn) = (0, 0, 0, 0)
-    for feature in features[:index]:
-        if labelMap[feature] == 1:
-            tp += 1
-        elif labelMap[feature] == 0:
-            fp += 1
-    for feature in features[index:]:
-        if labelMap[feature] == 1:
-            fn += 1
-        elif labelMap[feature] == 0:
-            tn += 1
-    return(tp, fn, fp, tn)
