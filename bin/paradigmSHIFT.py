@@ -44,6 +44,8 @@ class ParadigmSetup:
         self.pathway = None
         self.cnv = None
         self.exp = None
+        self.prot = None
+        self.act = None
         self.ipl = None
         self.features = []
         self.samples = []
@@ -55,14 +57,30 @@ class ParadigmSetup:
         for file in os.listdir("%s/clusterFiles" % (directory)):
             if file.endswith("pathway.tab"):
                 self.pathway = "%s/clusterFiles/%s" % (directory, file)
-            elif file.endswith("CNV.tab"):
-                self.cnv = "%s/clusterFiles/%s" % (directory, file)
-            elif (file.endswith("Expression.tab") | 
-                  file.endswith("Expression.vCohort.tab") |
-                  file.endswith("Expression.vNormal.tab")):
-                self.exp = "%s/clusterFiles/%s" % (directory, file)
         assert(self.pathway != None)
-        assert(self.cnv != None)
+        f = open(self.config, "r")
+        for line in f:
+            if line.isspace():
+                continue
+            if line.startswith("evidence"):
+                tokens = line.lstrip("evidence [").rstrip("]").split(",")
+                attachNode = None
+                attachFile = None
+                for token in tokens:
+                    parts = token.split("=")
+                    if parts[0] == "node":
+                        attachNode = parts[1]
+                    elif parts[0] == "suffix":
+                        attachFile = parts[1]
+                if attachNode == "genome":
+                    self.cnv = "%s/clusterFiles/%s" % (directory, attachFile)
+                elif attachNode == "mRNA":
+                    self.exp = "%s/clusterFiles/%s" % (directory, attachFile)
+                elif attachNode == "protein":
+                    self.prot = "%s/clusterFiles/%s" % (directory, attachFile)
+                elif attachNode == "active":
+                    self.act = "%s/clusterFiles/%s" % (directory, attachFile)
+        f.close()
         assert(self.exp != None)
         if os.path.exists("%s/merge_merged_unfiltered.tab" % (directory)):
             self.ipl = "%s/merge_merged_unfiltered.tab" % (directory)
@@ -75,7 +93,7 @@ class ParadigmSetup:
         self.public = public
         self.size = size
         self.nulls = nulls
-
+        
 class Parameters:
     def __init__(self):
         self.distance = [2]
@@ -373,15 +391,22 @@ class branchFolds(Target):
         
         ## write data
         system("mkdir data")
+        dataFiles = []
+        if self.paradigmSetup.cnv is not None:
+            dataFiles.append(self.paradigmSetup.cnv)
+        if self.paradigmSetup.exp is not None:
+            dataFiles.append(self.paradigmSetup.exp)
+        if self.paradigmSetup.prot is not None:
+            dataFiles.append(self.paradigmSetup.prot)
+        if self.paradigmSetup.act is not None:
+            dataFiles.append(self.paradigmSetup.act)
         genData = jtData(self.mutatedFeature.gene, self.paradigmSetup.samples, proteinFeatures, self.paradigmSetup.features, 
-                         [self.paradigmSetup.cnv, self.paradigmSetup.exp], self.directory,
-                         paradigmPublic = self.paradigmSetup.public,
+                         dataFiles, self.directory, paradigmPublic = self.paradigmSetup.public,
                          batchSize = self.paradigmSetup.size)
         genData.run()
         for null in range(1, self.paradigmSetup.nulls+1):
             genData = jtNData(null, self.mutatedFeature.gene, self.paradigmSetup.samples, proteinFeatures, self.paradigmSetup.features,
-                              [self.paradigmSetup.cnv, self.paradigmSetup.exp], self.directory,
-                              paradigmPublic = self.paradigmSetup.public,
+                              dataFiles, self.directory, paradigmPublic = self.paradigmSetup.public,
                               batchSize = self.paradigmSetup.size)
             genData.run()
         
