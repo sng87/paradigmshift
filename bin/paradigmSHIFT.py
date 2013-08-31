@@ -558,35 +558,40 @@ class prepareNeighborhood(Target):
                                                                     self.iParam, self.method)
             os.chdir(shiftDir)
         
-        ## get upstream and downstream
+        ## get upstream and downstream base pathways per complex
         system("echo Selecting Mutational Network ... >> progress.log")
-        dataFile = "%s/full_%s" % (self.mutatedFeature.data, self.paradigmSetup.exp.split("/")[-1])
+        dataMap = {}
+        assert self.paradigmSetup.exp is not None
+        dataMap["mRNA"] = "%s/full_%s" % (self.mutatedFeature.data, self.paradigmSetup.exp.split("/")[-1])
+        if self.paradigmSetup.act is not None:
+            # dataMap["active"] = "%s" % (self.paradigmSetup.ipl)
+            dataMap["active"] = "%s/full_%s" % (self.mutatedFeature.data, self.paradigmSetup.act.split("/")[-1])
         positiveSamples = list(set(self.trainSamples) & set(self.mutatedFeature.positive))
         negativeSamples = list(set(self.trainSamples) & set(self.mutatedFeature.negative))
-        (featureScore, featureRank) = getFeatureScores(dataFile, positiveSamples, 
+        (featureScore, featureRank) = getFeatureScores(dataMap, positiveSamples, 
                                                negativeSamples, method = self.method,
                                                outFile = "feature.score")
         focusPathways = identifyNeighborhoods(self.mutatedFeature.gene, self.gPathway,
                                               maxDistance = self.dParam)
+        
+        ## select complex pathways that relevant to the mutation (currently no selection)
         focusScore = {}
         for index, focusPathway in enumerate(focusPathways):
-            upstreamFeatures = focusPathway[0][0]
-            downstreamFeatures = focusPathway[1][0]
             featureValues = []
-            for feature in upstreamFeatures:
-                if feature in featureScore:
+            for feature in focusPathway[0][0]["active"]:
+                if feature in featureScore["mRNA"]:
                     featurePaths = shortestPath(feature, self.mutatedFeature.gene, focusPathway[0][1].interactions)
                     pathSigns = [signPath(path, focusPathway[0][1].interactions) for path in featurePaths]
                     try:
-                        featureValues.append((-1)*featureScore[feature]*mean(pathSigns))
+                        featureValues.append((-1)*featureScore["mRNA"][feature]*mean(pathSigns))
                     except TypeError:
                         pass
-            for feature in downstreamFeatures:
-                if feature in featureScore:
+            for feature in focusPathway[1][0]["mRNA"]:
+                if feature in featureScore["mRNA"]:
                     featurePaths = shortestPath(self.mutatedFeature.gene, feature, focusPathway[1][1].interactions)
                     pathSigns = [signPath(path, focusPathway[1][1].interactions) for path in featurePaths]
                     try:
-                        featureValues.append((1)*featureScore[feature]*mean(pathSigns))
+                        featureValues.append((1)*featureScore["mRNA"][feature]*mean(pathSigns))
                     except TypeError:
                         pass
             if len(featureValues) > 0:
@@ -599,22 +604,26 @@ class prepareNeighborhood(Target):
         #### while (float(len(addedFocus))/float(len(focusScore.keys())) < 0.5) or (len(addedFocus) < 4):
         while len(rankFocus) > 0:
             addedFocus.append(rankFocus.pop(0))
-        uFeatures = []
-        dFeatures = []
+        
+        uFeatures = {"active" : []}
+        dFeatures = {"mRNA" : [], "active" : []}
         uBase = Pathway({self.mutatedFeature.gene : self.gPathway.nodes[self.mutatedFeature.gene]}, {})
         dBase = Pathway({self.mutatedFeature.gene : self.gPathway.nodes[self.mutatedFeature.gene]}, {})
         for focus in addedFocus:
             system("echo ... %s >> progress.log" % (focusScore[focus]))
-            uFeatures = list(set(uFeatures) | set(focusPathways[focus][0][0]))
-            dFeatures = list(set(dFeatures) | set(focusPathways[focus][1][0]))
+            uFeatures["active"] = list(set(uFeatures["active"]) | set(focusPathways[focus][0][0]["active"]))
+            dFeatures["mRNA"] = list(set(dFeatures["mRNA"]) | set(focusPathways[focus][1][0]["mRNA"]))
+            dFeatures["active"] = list(set(dFeatures["active"]) | set(focusPathways[focus][1][0]["active"]))
             uBase = combinePathways(uBase, focusPathways[focus][0][1])
             dBase = combinePathways(dBase, focusPathways[focus][1][1])
-        uFeatures = list(set(uFeatures) - set(dFeatures))
+        uFeatures["active"] = list(set(uFeatures["active"]) - (set(dFeatures["mRNA"]) | set(dFeatures["active"])))
         wPathway("upstream_base.tab", uBase.nodes, uBase.interactions)
         wPathway("downstream_base.tab", dBase.nodes, dBase.interactions)
-        if len(uFeatures) >= 4 and (dFeatures) >= 4:
+        
+        ## perform network selection as long as there are sufficient features
+        if len(uFeatures["active"]) >= 4 and len(dFeatures["mRNA"] + dFeatures["active"]) >= 4:
             isPass = True
-            (uPathway, dPathway) = selectMutNeighborhood(self.mutatedFeature.gene, featureRank, uFeatures, dFeatures, uBase, dBase, threshold = self.tParam, penalty = self.iParam)
+            (uPathway, dPathway) = selectMutNeighborhood(self.mutatedFeature.gene, featureScore, featureRank, uFeatures, dFeatures, uBase, dBase, threshold = self.tParam, penalty = self.iParam)
             if self.setUpstream is not None:
                 (uNodes, uInteractions) = rPathway(self.setUpstream)
                 uPathway = Pathway(uNodes, uInteractions)
@@ -624,8 +633,8 @@ class prepareNeighborhood(Target):
             wPathway("upstream_pathway.tab", uPathway.nodes, uPathway.interactions)
             wPathway("downstream_pathway.tab", dPathway.nodes, dPathway.interactions)
             
-            uSelected = list(set(uFeatures) & set(uPathway.nodes))
-            dSelected = list(set(dFeatures) & set(dPathway.nodes))
+            uSelected = list(set(uFeatures["active"]) & set(uPathway.nodes))
+            dSelected = list(set(dFeatures["mRNA"] + dFeatures["active"]) & set(dPathway.nodes))
         else:
             isPass = False
         
@@ -1101,10 +1110,16 @@ class pshiftCV(Target):
         o.close()
     
         ## compute auc from stats
-        sorted_tr = normShift_tr.keys()
-        sorted_tr.sort(lambda x, y: cmp(normShift_tr[y],normShift_tr[x]))
+        absnormShift_tr = {}
+        for sample in normShift_tr:
+            absnormShift_tr[sample] = abs(normShift_tr[sample])
+        sorted_tr = absnormShift_tr.keys()
+        sorted_tr.sort(lambda x, y: cmp(absnormShift_tr[y],absnormShift_tr[x]))
         auc_tr = computeAUC(sorted_tr, labelMap, normShift_tr)[0]
         if self.fold != 0:
+            absnormShift_te = {}
+            for sample in normShift_te:
+                absnormShift_te[sample] = abs(normShift_te[sample])
             sorted_te = normShift_te.keys()
             sorted_te.sort(lambda x, y: cmp(normShift_te[y],normShift_te[x]))
             auc_te = computeAUC(sorted_te, labelMap, normShift_te)[0]

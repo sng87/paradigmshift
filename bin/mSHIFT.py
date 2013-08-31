@@ -532,7 +532,7 @@ class DataMatrix:
         rowLength = len(self.rows)
         colIndex = self.cmap[col]
         rowIndex = self.rmap[row]
-        return(self.values[colIndex*rowLength+rowIndex])
+        return(self.values[rowIndex*rowLength+colIndex])
         
 def retColumns(inf, delim = "\t"):
     """returns the columns of a .tsv"""
@@ -834,7 +834,7 @@ def mean_std(inList, sample = True):
             std = 0.0
     return(mean, std)
 
-def getFeatureScores(dataFile, posSamples, negSamples, method = "variance",
+def getFeatureScores(dataMap, posSamples, negSamples, method = "variance",
                      outFile = None):
     """Computes feature scores for model selection"""
     ## define specific functions
@@ -898,100 +898,124 @@ def getFeatureScores(dataFile, posSamples, negSamples, method = "variance",
         return(absMap)
     def rankScores(scoreMap):
         rankMap = {}
-        features = []
-        for feature in scoreMap.keys():
-            try:
-                fval = float(scoreMap[feature])
-                if fval != fval:
-                    raise ValueError
-                features.append(feature)
-            except ValueError:
-                rankMap[feature] = 0
-        features.sort(lambda x, y: cmp(abs(scoreMap[x]),abs(scoreMap[y])))
-        for i, feature in enumerate(features):
-            rankMap[feature] = float(i+1)/len(features)
+        for attachment in scoreMap:
+            rankMap[attachment] = {}
+        for attachment in scoreMap:
+            rankFeatures = []
+            for feature in scoreMap[attachment]:
+                try:
+                    fval = float(scoreMap[attachment][feature])
+                    if fval != fval:
+                        raise ValueError
+                    rankFeatures.append(feature)
+                except ValueError:
+                    rankMap[attachment][feature] = 0
+            rankFeatures.sort(lambda x, y: cmp(abs(scoreMap[attachment][x]),abs(scoreMap[attachment][y])))
+            for i, feature in enumerate(rankFeatures):
+                rankMap[attachment][feature] = float(i+1)/len(rankFeatures)
         return(rankMap)
     
-    ## read in data matrix
-    matData = DataMatrix(dataFile)
-    matFeatures = matData.columns
-    matSamples = matData.rows
+    ## score features by method
+    varianceScore = {"mRNA" : {}, "active" : {}}
+    ttestScore = {"mRNA" : {}, "active" : {}}
+    svmScore = {"mRNA" : {}, "active" : {}}
+    for attachment in dataMap:
+        matData = DataMatrix(dataMap[attachment])
+        if method in ["variance", "vsMin", "vsMin_svm", "vsMax", "vsMax_svm"]:
+            varianceScore[attachment] = scoreVariance(matData, posSamples+negSamples)
+        if method in ["vsNon", "vsMin", "vsMax"]:
+            ttestScore[attachment] = scoreTT(matData, posSamples, negSamples)
+        if method in ["vsNon_svm", "vsMin_svm", "vsMax_svm"]:
+            svmScore[attachment] = scoreSVM(matData, posSamples, negSamples)
     
-    ## score features by supervision
+    ## compute score ranks
     nodeUnsigned = {}
     nodeScore = {}
     if method == "variance":
-        nodeUnsigned = scoreVariance(matData, posSamples+negSamples)
+        nodeUnsigned = varianceScore
         nodeScore = rankScores(nodeUnsigned)
     elif method == "vsNon":
-        nodeUnsigned = scoreTT(matData, posSamples, negSamples)
+        nodeUnsigned = ttestScore
         nodeScore = rankScores(nodeUnsigned)
     elif method == "vsNon_svm":
-        nodeUnsigned = scoreSVM(matData, posSamples, negSamples)
+        nodeUnsigned = svmScore
         nodeScore = rankScores(nodeUnsigned)
     elif method == "vsMin":
-        nodeUnsigned = scoreTT(matData, posSamples, negSamples)
-        nonScores = rankScores(nodeUnsigned)
-        varScores = rankScores(scoreVariance(matData, posSamples+negSamples))
-        for feature in list(set(nonScores.keys()) & set(varScores.keys())):
-            minVal = 1.0
-            valList = [nonScores[feature], varScores[feature]]
-            for i in valList:
-                try:
-                    if abs(i) < abs(minVal):
-                        minVal = i
-                except TypeError:
-                    pass
-            nodeScore[feature] = minVal
+        nodeUnsigned = ttestScore
+        nonScores = rankScores(ttestScore)
+        varScores = rankScores(varianceScore)
+        for attachment in nodeUnsigned:
+            if attachment not in nodeScore:
+                nodeScore[attachment] = {}
+            for feature in nodeUnsigned[attachment]:
+                minVal = 1.0
+                valList = [nonScores[attachment][feature], varScores[attachment][feature]]
+                for i in valList:
+                    try:
+                        if abs(i) < abs(minVal):
+                            minVal = i
+                    except TypeError:
+                        pass
+                nodeScore[attachment][feature] = minVal
     elif method == "vsMin_svm":
-        nodeUnsigned = scoreSVM(matData, posSamples, negSamples)
-        nonScores = rankScores(nodeUnsigned)
-        varScores = rankScores(scoreVariance(matData, posSamples+negSamples))
-        for feature in list(set(nonScores.keys()) & set(varScores.keys())):
-            minVal = 1.0
-            valList = [nonScores[feature], varScores[feature]]
-            for i in valList:
-                try:
-                    if abs(i) < abs(minVal):
-                        minVal = i
-                except TypeError:
-                    pass
-            nodeScore[feature] = minVal
+        nodeUnsigned = svmScore
+        nonScores = rankScores(svmScore)
+        varScores = rankScores(varianceScore)
+        for attachment in nodeUnsigned:
+            if attachment not in nodeScore:
+                nodeScore[attachment] = {}
+            for feature in nodeUnsigned[attachment]:
+                minVal = 1.0
+                valList = [nonScores[attachment][feature], varScores[attachment][feature]]
+                for i in valList:
+                    try:
+                        if abs(i) < abs(minVal):
+                            minVal = i
+                    except TypeError:
+                        pass
+                nodeScore[attachment][feature] = minVal
     elif method == "vsMax":
-        nodeUnsigned = scoreTT(matData, posSamples, negSamples)
-        nonScores = rankScores(nodeUnsigned)
-        varScores = rankScores(scoreVariance(matData, posSamples+negSamples))
-        for feature in list(set(nonScores.keys()) & set(varScores.keys())):
-            maxVal = 0.0
-            valList = [nonScores[feature], varScores[feature]]
-            for i in valList:
-                try:
-                    if abs(i) > abs(maxVal):
-                        maxVal = i
-                except TypeError:
-                    pass
-            nodeScore[feature] = maxVal
+        nodeUnsigned = ttestScore
+        nonScores = rankScores(ttestScore)
+        varScores = rankScores(varianceScore)
+        for attachment in nodeUnsigned:
+            if attachment not in nodeScore:
+                nodeScore[attachment] = {}
+            for feature in nodeUnsigned[attachment]:
+                maxVal = 0.0
+                valList = [nonScores[attachment][feature], varScores[attachment][feature]]
+                for i in valList:
+                    try:
+                        if abs(i) > abs(maxVal):
+                            maxVal = i
+                    except TypeError:
+                        pass
+                nodeScore[attachment][feature] = maxVal
     elif method == "vsMax_svm":
-        nodeUnsigned = scoreSVM(matData, posSamples, negSamples)
-        nonScores = rankScores(nodeUnsigned)
-        varScores = rankScores(scoreVariance(matData, posSamples+negSamples))
-        for feature in list(set(nonScores.keys()) & set(varScores.keys())):
-            maxVal = 0.0
-            valList = [nonScores[feature], varScores[feature]] 
-            for i in valList:
-                try:
-                    if abs(i) > abs(maxVal):
-                        maxVal = i
-                except TypeError:
-                    pass
-                nodeScore[feature] = maxVal
+        nodeUnsigned = svmScore
+        nonScores = rankScores(svmScore)
+        varScores = rankScores(varianceScore)
+        for attachment in nodeUnsigned:
+            if attachment not in nodeScore:
+                nodeScore[attachment] = {}
+            for feature in nodeUnsigned[attachment]:
+                maxVal = 0.0
+                valList = [nonScores[attachment][feature], varScores[attachment][feature]]
+                for i in valList:
+                    try:
+                        if abs(i) > abs(maxVal):
+                            maxVal = i
+                    except TypeError:
+                        pass
+                nodeScore[attachment][feature] = maxVal
     
     ## output scores
     if outFile:
         o = open(outFile, "w")
-        o.write("id\tvalue\trank\n")
-        for feature in nodeScore:
-            o.write("%s\t%s\t%s\n" % (feature, nodeUnsigned[feature], nodeScore[feature]))
+        o.write("id\tattachment\tvalue\trank\n")
+        for attachment in nodeScore:
+            for feature in nodeScore[attachment]:
+                o.write("%s\t%s\t%s\t%s\n" % (feature, attachment, nodeUnsigned[attachment][feature], nodeScore[attachment][feature]))
         o.close()
     return(nodeUnsigned, nodeScore)
 
@@ -1051,7 +1075,7 @@ def identifyNeighborhoods(focusGene, globalPathway, maxDistance = 2):
         return(groupedComplexes, isDownstream)
     def searchUpstream(focusGene, focusFeatures, gNodes, rgInteractions, maxDistance = 2):
         upstreamPathway = Pathway({focusGene : gNodes[focusGene]}, {})
-        upstreamFeatures = []
+        upstreamFeatures = {"active" : []}
         seenNodes = set(focusFeatures)
         searchNodes = deepcopy(focusFeatures)
         frontierNodes = []
@@ -1070,7 +1094,7 @@ def identifyNeighborhoods(focusGene, globalPathway, maxDistance = 2):
                                 if source not in upstreamPathway.interactions:
                                     upstreamPathway.interactions[source] = {}
                                 upstreamPathway.interactions[source][focusGene] = "-a>"
-                                upstreamFeatures.append(source)
+                                upstreamFeatures["active"].append(source)
                                 seenNodes.update([source])
                                 frontierNodes.append(source)
                             elif rgInteractions[currentNode][source].startswith("-a"):
@@ -1078,7 +1102,7 @@ def identifyNeighborhoods(focusGene, globalPathway, maxDistance = 2):
                                 if source not in upstreamPathway.interactions:
                                     upstreamPathway.interactions[source] = {}
                                 upstreamPathway.interactions[source][focusGene] = rgInteractions[currentNode][source]
-                                upstreamFeatures.append(source)
+                                upstreamFeatures["active"].append(source)
                                 seenNodes.update([source])
                                 frontierNodes.append(source)
                             elif rgInteractions[currentNode][source].startswith("-t"):
@@ -1097,14 +1121,14 @@ def identifyNeighborhoods(focusGene, globalPathway, maxDistance = 2):
                                 if source not in upstreamPathway.interactions:
                                     upstreamPathway.interactions[source] = {}
                                 upstreamPathway.interactions[source][currentNode] = rgInteractions[currentNode][source]
-                                upstreamFeatures.append(source)
+                                upstreamFeatures["active"].append(source)
                                 seenNodes.update([source])
                                 frontierNodes.append(source)
             searchNodes = deepcopy(frontierNodes)
         return(upstreamFeatures, upstreamPathway)
     def searchDownstream(focusGene, focusFeatures, gNodes, fgInteractions, maxDistance = 2):
         downstreamPathway = Pathway({focusGene : gNodes[focusGene]}, {})
-        downstreamFeatures = []
+        downstreamFeatures = {"mRNA" : [], "active" : []}
         seenNodes = set(focusFeatures)
         searchNodes = deepcopy(focusFeatures)
         frontierNodes = []
@@ -1125,6 +1149,7 @@ def identifyNeighborhoods(focusGene, globalPathway, maxDistance = 2):
                                 if focusGene not in downstreamPathway.interactions:
                                     downstreamPathway.interactions[focusGene] = {}
                                 downstreamPathway.interactions[focusGene][target] = fgInteractions[currentNode][target]
+                                downstreamFeatures["active"].append(target)
                                 seenNodes.update([target])
                                 frontierNodes.append(target)
                             elif fgInteractions[currentNode][target].startswith("-t"):
@@ -1132,7 +1157,7 @@ def identifyNeighborhoods(focusGene, globalPathway, maxDistance = 2):
                                 if focusGene not in downstreamPathway.interactions:
                                     downstreamPathway.interactions[focusGene] = {}
                                 downstreamPathway.interactions[focusGene][target] = fgInteractions[currentNode][target]
-                                downstreamFeatures.append(target)
+                                downstreamFeatures["mRNA"].append(target)
                                 seenNodes.update([target])
                         elif target in downstreamPathway.nodes:
                             if currentNode not in downstreamPathway.interactions:
@@ -1147,7 +1172,7 @@ def identifyNeighborhoods(focusGene, globalPathway, maxDistance = 2):
                                     downstreamPathway.interactions[currentNode] = {}
                                 downstreamPathway.interactions[currentNode][target] = fgInteractions[currentNode][target]
                                 if fgInteractions[currentNode][target].startswith("-t"):
-                                    downstreamFeatures.append(target)
+                                    downstreamFeatures["mRNA"].append(target)
                                 else:
                                     frontierNodes.append(target)
                                 seenNodes.update([target])
@@ -1172,20 +1197,25 @@ def identifyNeighborhoods(focusGene, globalPathway, maxDistance = 2):
         focusPathways.append([[upstreamFeatures, upstreamPathway], [downstreamFeatures, downstreamPathway]])
     return(focusPathways)
 
-def selectMutNeighborhood(focusGene, nodeScore, upstreamFeatures, downstreamFeatures, upstreamBase, downstreamBase, threshold = 0.68, penalty = 0.01):
+def selectMutNeighborhood(focusGene, nodeScore, nodeRank, upstreamFeatures, downstreamFeatures, upstreamBase, downstreamBase, threshold = 0.68, penalty = 0.01):
     """performs simple univariate approach for selecting features with a threshold"""
     upstreamPathway = Pathway({focusGene : upstreamBase.nodes[focusGene]}, {})
     addedFeatures = []
     log("## upstream\n", file = "selection.log")
+    rankMap = {}
     rankFeatures = []
-    for feature in upstreamFeatures:
-        if feature in nodeScore:
-            rankFeatures.append(feature)
-            log("%s\t%s\n" % (feature, nodeScore[feature]), file = "selection.log")
-    rankFeatures.sort(lambda x, y: cmp(nodeScore[y],nodeScore[x]))
-    while (len(rankFeatures) > 0) and (len(addedFeatures) < 4 or nodeScore[rankFeatures[0]] >= threshold+penalty*len(addedFeatures)):
+    for feature in upstreamFeatures["active"]:
+        if feature in nodeRank["active"]:
+            rankMap[feature] = nodeRank["active"][feature]
+            if feature not in rankFeatures:
+                rankFeatures.append(feature)
+        elif feature in nodeRank["mRNA"]:
+            rankMap[feature] = nodeRank["mRNA"][feature]
+            if feature not in rankFeatures:
+                rankFeatures.append(feature)
+    rankFeatures.sort(lambda x, y: cmp(rankMap[y], rankMap[x]))
+    while (len(rankFeatures) > 0) and (len(addedFeatures) < 4 or rankMap[rankFeatures[0]] >= threshold+penalty*len(addedFeatures)):
         currentFeature = rankFeatures.pop(0)
-        log("-> %s\n" % (currentFeature), file = "selection.log")
         addedFeatures.append(currentFeature)
         addPaths = shortestPath(currentFeature, focusGene, upstreamBase.interactions)
         for path in addPaths:
@@ -1194,18 +1224,36 @@ def selectMutNeighborhood(focusGene, nodeScore, upstreamFeatures, downstreamFeat
                 if path[i] not in upstreamPathway.interactions:
                     upstreamPathway.interactions[path[i]] = {}
                 upstreamPathway.interactions[path[i]][path[i+1]] = upstreamBase.interactions[path[i]][path[i+1]]
+    for feature in addedFeatures + rankFeatures:
+        featureVals = []
+        if feature in nodeRank["mRNA"]:
+            featureVals.append("mRNA:%s(%s)" % (nodeScore["mRNA"][feature], nodeRank["mRNA"][feature]))
+        if feature in nodeRank["active"]:
+            featureVals.append("active:%s(%s)" % (nodeScore["active"][feature], nodeRank["active"][feature]))
+        if feature in addedFeatures:
+            log("%s\t%s\t%s\n" % (feature, ",".join(featureVals), "*"), file = "selection.log")
+        elif feature in upstreamPathway.nodes:
+            log("%s\t%s\t%s\n" % (feature, ",".join(featureVals), "-"), file = "selection.log")
+        else:
+            log("%s\t%s\n" % (feature, ",".join(featureVals)), file = "selection.log")
     downstreamPathway = Pathway({focusGene : downstreamBase.nodes[focusGene]}, {})
     addedFeatures = []
     log("## downstream\n", file = "selection.log")
+    rankMap = {}
     rankFeatures = []
-    for feature in downstreamFeatures:
-        if feature in nodeScore:
-            rankFeatures.append(feature)
-            log("%s\t%s\n" % (feature, nodeScore[feature]), file = "selection.log")
-    rankFeatures.sort(lambda x, y: cmp(nodeScore[y],nodeScore[x]))
-    while (len(rankFeatures) > 0) and (len(addedFeatures) < 4 or nodeScore[rankFeatures[0]] >= threshold+penalty*len(addedFeatures)):
+    for feature in downstreamFeatures["active"]:
+        if feature in nodeRank["active"]:
+            rankMap[feature] = nodeRank["active"][feature]
+            if feature not in rankFeatures:
+                rankFeatures.append(feature)
+    for feature in downstreamFeatures["mRNA"]:
+        if feature in nodeRank["mRNA"]:
+            rankMap[feature] = nodeRank["mRNA"][feature]
+            if feature not in rankFeatures:
+                rankFeatures.append(feature)
+    rankFeatures.sort(lambda x, y: cmp(rankMap[y],rankMap[x]))
+    while (len(rankFeatures) > 0) and (len(addedFeatures) < 4 or rankMap[rankFeatures[0]] >= threshold+penalty*len(addedFeatures)):
         currentFeature = rankFeatures.pop(0)
-        log("-> %s\n" % (currentFeature), file = "selection.log")
         addedFeatures.append(currentFeature)
         addPaths = shortestPath(focusGene, currentFeature, downstreamBase.interactions)
         for path in addPaths:
@@ -1214,6 +1262,18 @@ def selectMutNeighborhood(focusGene, nodeScore, upstreamFeatures, downstreamFeat
                 if path[i] not in downstreamPathway.interactions:
                     downstreamPathway.interactions[path[i]] = {}
                 downstreamPathway.interactions[path[i]][path[i+1]] = downstreamBase.interactions[path[i]][path[i+1]]
+    for feature in addedFeatures + rankFeatures:
+        featureVals = []
+        if feature in nodeRank["mRNA"]:
+            featureVals.append("mRNA:%s(%s)" % (nodeScore["mRNA"][feature], nodeRank["mRNA"][feature]))
+        if feature in nodeRank["active"]:
+            featureVals.append("active:%s(%s)" % (nodeScore["active"][feature], nodeRank["active"][feature]))
+        if feature in addedFeatures:
+            log("%s\t%s\t%s\n" % (feature, ",".join(featureVals), "*"), file = "selection.log")
+        elif feature in downstreamPathway.nodes:
+            log("%s\t%s\t%s\n" % (feature, ",".join(featureVals), "-"), file = "selection.log")
+        else:
+            log("%s\t%s\n" % (feature, ",".join(featureVals)), file = "selection.log")
     return(upstreamPathway, downstreamPathway)
 
 def getConfusion(index, features, labelMap):
