@@ -528,11 +528,10 @@ class DataMatrix:
         self.rows = deepcopy(rowFeatures)
         self.rmap = deepcopy(rowIndex)
     def get(self, col, row):
-        colLength = len(self.columns)
-        rowLength = len(self.rows)
-        colIndex = self.cmap[col]
         rowIndex = self.rmap[row]
-        return(self.values[rowIndex*rowLength+colIndex])
+        colLength = len(self.columns)
+        colIndex = self.cmap[col]
+        return(self.values[rowIndex*colLength+colIndex])
         
 def retColumns(inf, delim = "\t"):
     """returns the columns of a .tsv"""
