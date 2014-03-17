@@ -82,6 +82,10 @@ def wList(outf, outList):
          f.write("%s\n" % (i))
      f.close()
 
+def formatSample(sample):
+    """this function may need to be modified depending on the project"""
+    return(sample[0:15])
+
 def main(args):
     ## parse arguments
     try:
@@ -110,17 +114,17 @@ def main(args):
     for i in mutGenes:
         mutSamples = []
         for j in mutMap[i]:
-            mutSamples.append(j[0:12])
+            mutSamples.append(formatSample(j))
         f.write("%s\t%s\t%s\n" % (i, len(mutMap[i]), ",".join(mutSamples)))
     f.close()
-    wList("include.samples", [i[0:12] for i in allSamples])
+    wList("include.samples", [formatSample(i) for i in allSamples])
     
     ## write mutation.list_t
     f = open("mutation.list_t", "w")
     for i in mutGenes:
         mutSamples = []
         for j in mutMap[i]:
-            mutSamples.append(j[0:12])
+            mutSamples.append(formatSample(j))
         f.write("%s\t%s\n" % (i, "\t".join(mutSamples)))
     f.close()
     
@@ -146,17 +150,17 @@ def main(args):
     for gene in mutClass:
         truncSamples = []
         missSamples = []
-        negSamples = [i[0:12] for i in allSamples]
+        negSamples = [formatSample(i) for i in allSamples]
         for type in truncList:
             if type in mutClass[gene]:
                 for sample in mutClass[gene][type]:
-                    if sample[0:12] not in truncSamples:
-                        truncSamples.append(sample[0:12])
+                    if formatSample(sample) not in truncSamples:
+                        truncSamples.append(formatSample(sample))
         for type in missList:
             if type in mutClass[gene]:
                 for sample in mutClass[gene][type]:
-                    if sample[0:12] not in missSamples:
-                        missSamples.append(sample[0:12])
+                    if formatSample(sample) not in missSamples:
+                        missSamples.append(formatSample(sample))
         negSamples = list(set(negSamples) - (set(truncSamples) | set(missSamples)))
         f.write("%s\t%s\t%s\t%s\t%s\n" % (gene, len(truncSamples), ",".join(truncSamples), ",".join(missSamples), ",".join(negSamples)))
     f.close()

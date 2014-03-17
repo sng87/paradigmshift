@@ -1,1490 +1,1726 @@
 #!/usr/bin/env python
 """
 paradigmSHIFT.py
+
+Author: Sam Ng
+Last Updated: 2014-03-11
 """
-## Written By: Sam Ng
-import math, os, sys, random, re
+import math, os, random, re, string, sys, types
 from copy import deepcopy
 
-from mSHIFT import *
+import pandas
 
 from optparse import OptionParser
-from jobTree.src.bioio import logger
-from jobTree.src.bioio import system
 from jobTree.scriptTree.target import Target
 from jobTree.scriptTree.stack import Stack
 
-## select seed
-if not os.path.exists("seed.log"):
-    randSeed = random.randint(0,9999999999999999)
-    f = open("seed.log", "w")
-    f.write("%s\n" % (randSeed))
-    f.close()
-else:
-    f = open("seed.log", "r")
-    randSeed = int(f.readline().rstrip("\r\n"))
-    f.close()
-
-## executables and directories
-paradigmExec = "paradigm"
-circleExec = "circlePlot.py"
-htmlDir = "/inside/grotto/users/sng/.html"
+## default executables
+paradigm_executable = 'paradigm'
+circleplot_executable = 'circlePlot.py'
 
 ## default variables
-runParallel = False              ## Run different genes in parallel
-mutationThreshold = 5            ## Minimum mutations in cohort needed to consider a gene
-maxFeatures = 30                 ## Maximum number of features to in PARADIGM Shift run
+in_parallel = False     ## run events in parallel
+min_alterations = 5     ## minimum number of alterations for analysis to be considered
 
-## object classes
+## ps classes
 class ParadigmSetup:
-    def __init__(self, directory, include, public = False, size = 50, nulls = 30):
+    """
+    Stores relevant information for preparing a Paradigm run [Paradigm-Shift specific]
+    Dependencies: logger, returnColumns, returnRows, readList
+    """
+    def __init__(self, directory, include_samples, nulls = 30, batch_size = 50, public = False):
         self.directory = directory
-        self.config = None
-        self.params = None
-        self.pathway = None
-        self.cnv = None
-        self.exp = None
-        self.prot = None
-        self.act = None
-        self.ipl = None
-        self.features = []
-        self.samples = []
-        assert os.path.exists("%s/config.txt" % (directory))
-        self.config = "%s/config.txt" % (directory)
-        assert os.path.exists("%s/params.txt" % (directory))
-        self.params = "%s/params.txt" % (directory)        
-        assert os.path.exists("%s/clusterFiles" % (directory))
-        for file in os.listdir("%s/clusterFiles" % (directory)):
-            if file.endswith("pathway.tab"):
-                self.pathway = "%s/clusterFiles/%s" % (directory, file)
-        assert(self.pathway != None)
-        f = open(self.config, "r")
-        for line in f:
-            if line.isspace():
-                continue
-            if line.startswith("evidence"):
-                tokens = line.lstrip("evidence [").rstrip("]").split(",")
-                attachNode = None
-                attachFile = None
-                for token in tokens:
-                    parts = token.split("=")
-                    if parts[0] == "node":
-                        attachNode = parts[1]
-                    elif parts[0] == "suffix":
-                        attachFile = parts[1]
-                if attachNode == "genome":
-                    self.cnv = "%s/clusterFiles/%s" % (directory, attachFile)
-                elif attachNode == "mRNA":
-                    self.exp = "%s/clusterFiles/%s" % (directory, attachFile)
-                elif attachNode == "protein":
-                    self.prot = "%s/clusterFiles/%s" % (directory, attachFile)
-                elif attachNode == "active":
-                    self.act = "%s/clusterFiles/%s" % (directory, attachFile)
-        f.close()
-        assert(self.exp != None)
-        if os.path.exists("%s/merge_merged_unfiltered.tab" % (directory)):
-            self.ipl = "%s/merge_merged_unfiltered.tab" % (directory)
-        elif os.path.exists("%s/merge_merged.tab" % (directory)):
-            self.ipl = "%s/merge_merged.tab" % (directory)
-        self.features = list(set(retColumns(self.cnv)) & set(retColumns(self.exp)))
-        self.samples = list(set(retRows(self.cnv)) & set(retRows(self.exp)))
-        if include:
-            self.samples = list(set(self.samples) & set(rList(include)))
+        self.nulls = nulls
+        self.batch_size = batch_size
         self.public = public
-        self.size = size
-        self.nulls = nulls
-        
-class Parameters:
-    def __init__(self):
-        self.distance = [2]
-        self.threshold = [0.68]
-        self.penalty = [0.01]
-        self.selection = ["vsNon"]
-        self.override = [None, None]
-        self.cv = True
-        self.msep = "tt"
-        self.cohort = os.getcwd().split("/")[-1]
-        self.link = False
-        self.clean = True
-    def set(self, configFile):
-        f = open(configFile, "r")
+        (self.config, self.params) = (None, None)
+        assert(os.path.exists('%s/config.txt' % (directory)))
+        assert(os.path.exists('%s/params.txt' % (directory)))
+        self.config = '%s/config.txt' % (directory)
+        self.params = '%s/params.txt' % (directory)
+        (self.imap, self.dogma) = (None, None)
+        for file in os.listdir(directory):
+            if file.endswith('.imap'):
+                self.imap = '%s/%s' % (directory, file)
+            elif file.endswith('.dogma'):
+                self.dogma = '%s/%s' % (directory, file)
+        (self.pathway) = (None)
+        assert(os.path.exists('%s/clusterFiles' % (directory)))
+        for file in os.listdir('%s/clusterFiles' % (directory)):
+            if file.endswith('pathway.tab'):
+                assert(self.pathway == None)
+                self.pathway = '%s/clusterFiles/%s' % (directory, file)
+        assert(self.pathway != None)
+        (self.genome, self.mrna, self.protein, self.active, self.ipl) = ([], [], [], [], [])
+        f = open(self.config, 'r')
         for line in f:
             if line.isspace():
                 continue
-            pline = line.rstrip().split("\t")
-            if line.startswith("distance"):
-                self.distance = [int(item) for item in pline[1].split(",")]
-            elif line.startswith("threshold"):
-                self.threshold = [float(item) for item in pline[1].split(",")]
-            elif line.startswith("penalty"):
-                self.penalty = [float(item) for item in pline[1].split(",")]
-            elif line.startswith("selection"):
-                self.selection = [item for item in pline[1].split(",")]
-            elif line.startswith("override"):
-                self.override = []
-                for item in pline[1].split(","):
-                    if len(item) == 0:
-                        self.override.append(None)
-                    else:
-                        self.override.append(os.path.abspath(item))
-            elif line.startswith("cv"):
-                self.cv = bool(int(pline[1]))
-            elif line.startswith("msep"):
-                self.msep = pline[1]
-            elif line.startswith("cohort"):
-                self.cohort = pline[1]
-            elif line.startswith("search"):
-                self.link = bool(int(pline[1]))
-            elif line.startswith("clean"):
-                self.clean = bool(int(pline[1]))
+            if line.startswith('evidence'):
+                tokens = line.lstrip('evidence [').rstrip(']').split(',')
+                attach_node = None
+                attach_file = None
+                for token in tokens:
+                    parts = token.split('=')
+                    if parts[0] == 'node':
+                        attach_node = parts[1]
+                    elif parts[0] == 'suffix':
+                        attach_file = parts[1]
+                if attach_node == 'genome':
+                    self.genome.append('%s/clusterFiles/%s' % (directory, attach_file))
+                elif attach_node == 'mRNA':
+                    self.mrna.append('%s/clusterFiles/%s' % (directory, attach_file))
+                elif attach_node == 'protein':
+                    self.protein.append('%s/clusterFiles/%s' % (directory, attach_file))
+                elif attach_node == 'active':
+                    self.active.append('%s/clusterFiles/%s' % (directory, attach_file))
         f.close()
+        assert(len(self.mrna) > 0)
+        if os.path.exists('%s/merge_merged_unfiltered.tab' % (directory)):
+            self.ipl.append('%s/merge_merged_unfiltered.tab' % (directory))
+        elif os.path.exists('%s/merge_merged.tab' % (directory)):
+            self.ipl.append('%s/merge_merged.tab' % (directory))
+        (self.features) = (None)
+        for file in self.genome + self.mrna:
+            if self.features == None:
+                self.features = returnColumns(file)
+            else:
+                self.features = list(set(self.features) & set(returnColumns(file)))
+        self.features.sort()
+        (self.samples) = (None)
+        for file in self.genome + self.mrna + self.protein + self.active:
+            if self.samples == None:
+                self.samples = returnRows(file)
+            else:
+                self.samples = list(set(self.samples) & set(returnRows(file)))
+        if include_samples:
+            self.samples = list(set(self.samples) & set(readList(include_samples)))
+        self.samples.sort()
+        ## we really should do a check to make sure the sample and feature spaces match
+        ## for all files, since this is a sticking point to many downstream methods
 
-class Mutated:
-    def __init__(self, gene, all, positive, negative = None, directory = ""):
-        self.gene = gene
-        self.positive = list(set(positive) & set(all))
-        if negative:
-            self.negative = list(set(negative) & set(all))
-        else:
-            self.negative = list(set(all) - set(positive))
-        self.data = "%s/analysis/%s/data/" % (directory, gene)
-    def proportion(self):
-        return(float(len(self.positive))/float(len(self.positive) + len(self.negative)))
-
-def batchCount(cohortSize, batchSize = 15):
-    return(int((cohortSize+batchSize-1)/batchSize))
-
-def chunks(sampleList, batchSize = 15):
-    for i in xrange(0, len(sampleList), batchSize):
-        yield sampleList[i:i+batchSize]
-
-## R script definitions
-def writeScripts():
-    """creates the R scripts necessary for plotting"""
-    msepR = """#!/usr/bin/env Rscript
-    args = commandArgs(TRUE)
-    mutGene = args[1]
-    mutFile = args[2]
-    wtFile = args[3]
-    
-    mutData = read.table(mutFile)
-    wtData = read.table(wtFile)
-    xMin = min(mutData$V2, wtData$V2)
-    if (xMin > 0) {
-        xMin = 0
-    }
-    xMax = max(mutData$V2, wtData$V2)
-    if (xMax < 0) {
-        xMax = 0
-    }
-    xMin = 1.4*xMin
-    xMax = 1.4*xMax
-    
-    yMax = 1.1*max(density(mutData$V2)$y, density(wtData$V2)$y)
-    
-    pdf(paste(mutGene, ".msep.pdf", sep = ""), height = 5, width = 5)
-    plot(density(mutData$V2), col = "red", xlim = c(xMin, xMax), ylim = c(0, yMax), main = mutGene, xlab = "")
-    par(new = T)
-    plot(density(wtData$V2), xlim = c(xMin, xMax), ylim = c(0, yMax), main = "", xlab = "", ylab = "")
-    dev.off()
+class Parameters:
     """
-     
-    backgroundR = """#!/usr/bin/env Rscript
-    args = commandArgs(TRUE)
-    mutGene = args[1]
-    realFile = args[2]
-    nullFile = args[3]
-    
-    realData = read.table(realFile)$V1
-    nullData = read.table(nullFile)$V1
-    nullData = nullData[!is.nan(nullData)]
-    minVal = min(realData, nullData)
-    if (minVal > 0) {
-        minVal = 0
-    }
-    maxVal = max(realData, nullData)
-    if (maxVal < 0) {
-        maxVal = 0
-    }
-    minVal = 1.4*minVal
-    maxVal = 1.4*maxVal
-
-    pdf(paste(mutGene, ".background.pdf", sep = ""), height = 5, width = 5)
-    plot(density(nullData), main = mutGene, xlim = c(minVal, maxVal))
-    abline(v = realData[1], col = "red")
-    dev.off()
+    Stores parameters used for the Paradigm-Shift algorithm [Paradigm-Shift specific]
     """
-    
-    f = open("msep.R", "w")
-    f.write(msepR)
-    f.close
-    f = open("background.R", "w")
-    f.write(backgroundR)
-    f.close
-    system("chmod 755 msep.R background.R")
-
-## jobTree classes
-class jtData(Target):
-    def __init__(self, mutatedGene, useSamples, useFeatures, allFeatures, dataFiles,
-                 directory, paradigmPublic = False, batchSize = 15):
-        Target.__init__(self, time=1000)
-        self.mutatedGene = mutatedGene
-        self.useSamples = useSamples
-        self.useFeatures = useFeatures
-        self.allFeatures = allFeatures
-        self.dataFiles = dataFiles
-        self.directory = directory
-        self.paradigmPublic = paradigmPublic
-        self.batchSize = batchSize
-    def run(self):
-        shiftDir = "%s/analysis/%s" % (self.directory, self.mutatedGene)
-        os.chdir(shiftDir)
-        random.seed(randSeed)
-        
-        ## write data
-        for file in self.dataFiles:
-            rwCRSData("data/full_%s" % (file.split("/")[-1]), file, useRows = self.useSamples)
-            rwCRSData("data/up_%s" % (file.split("/")[-1]), file, useRows = self.useSamples, useCols = self.useFeatures)
-            rwCRSData("data/down_%s" % (file.split("/")[-1]), file, useRows = self.useSamples, useCols = list(set(self.useFeatures)-set([self.mutatedGene])))
-        
-        ## public batching
-        if self.paradigmPublic:
-            batches = batchCount(len(self.useSamples), batchSize = self.batchSize)
-            batchChunker = chunks(self.useSamples, batchSize = self.batchSize)
-            for b in range(batches):
-                currentSamples = batchChunker.next()
-                for file in self.dataFiles:
-                    rwCRSData("data/up_b%s_%s_%s" % (b, batches, file.split("/")[-1]), file, useRows = currentSamples, useCols = self.useFeatures)
-                    rwCRSData("data/down_b%s_%s_%s" % (b, batches, file.split("/")[-1]), file, useRows = currentSamples, useCols = list(set(self.useFeatures)-set([self.mutatedGene])))
-
-class jtNData(Target):
-    def __init__(self, null, mutatedGene, useSamples, useFeatures, allFeatures, dataFiles,
-                 directory, paradigmPublic = False, batchSize = 15):
-        Target.__init__(self, time=1000)
-        self.null = null
-        self.mutatedGene = mutatedGene
-        self.useSamples = useSamples
-        self.useFeatures = useFeatures
-        self.allFeatures = allFeatures
-        self.dataFiles = dataFiles
-        self.directory = directory
-        self.paradigmPublic = paradigmPublic
-        self.batchSize = batchSize
-    def run(self):
-        shiftDir = "%s/analysis/%s" % (self.directory, self.mutatedGene)
-        os.chdir(shiftDir)
-        random.seed(randSeed+self.null)
-        
-        ## permute columns for nulls
-        colMap = {}
-        colFeatures = list(set(self.allFeatures)-set([self.mutatedGene]))
-        colPermute = random.sample(colFeatures, len(colFeatures))
-        for i in range(0, len(colFeatures)):
-            colMap[colFeatures[i]] = colPermute[i]
-        
-        ## write data
-        for file in self.dataFiles:
-            rwCRSData("data/up_N%s_%s" % (self.null, file.split("/")[-1]), file, useRows = self.useSamples, colMap = colMap, useCols = self.useFeatures)
-            rwCRSData("data/down_N%s_%s" % (self.null, file.split("/")[-1]), file, useRows = self.useSamples, colMap = colMap, useCols = list(set(self.useFeatures)-set([self.mutatedGene])))
-
-        ## public batching
-        if self.paradigmPublic:
-            batches = batchCount(len(self.useSamples), batchSize = self.batchSize)
-            batchChunker = chunks(self.useSamples, batchSize = self.batchSize)
-            for b in range(batches):
-                currentSamples = batchChunker.next()
-                for file in self.dataFiles:
-                    rwCRSData("data/up_N%s_b%s_%s_%s" % (self.null, b, batches, file.split("/")[-1]), file, useRows = currentSamples, colMap = colMap, useCols = self.useFeatures)
-                    rwCRSData("data/down_N%s_b%s_%s_%s" % (self.null, b, batches, file.split("/")[-1]), file, useRows = currentSamples, colMap = colMap, useCols = list(set(self.useFeatures)-set([self.mutatedGene])))
-
-class jtCmd(Target):
-    def __init__(self, cmd, directory):
-        Target.__init__(self, time=1000)
-        self.cmd = cmd
-        self.directory = directory
-    def run(self):
-        os.chdir(self.directory)
-        system(self.cmd)
-
-class queueGenes(Target):
-    def __init__(self, mutatedList, paradigmSetup, gPathway, params, foldMap, directory,
-                 appendFeatures = []):
-        Target.__init__(self, time=10000)
-        self.mutatedList = mutatedList
-        self.paradigmSetup = paradigmSetup
-        self.gPathway = gPathway
-        self.params = params
-        self.foldMap = foldMap
-        self.directory = directory
-        self.appendFeatures = appendFeatures
-    def run(self):
-        os.chdir(self.directory)
-        
-        ## queue genes
-        htmlFeatures = deepcopy(self.appendFeatures)
-        if not os.path.exists("analysis"):
-            system("mkdir analysis")
-        if len(self.mutatedList) > 0:
-            mutatedFeature = self.mutatedList[0]
-            if not os.path.exists("analysis/%s" % (mutatedFeature.gene)):
-                system("mkdir analysis/%s" % (mutatedFeature.gene))
-                htmlFeatures.append(mutatedFeature.gene)
-                self.addChildTarget(branchFolds(mutatedFeature, self.paradigmSetup,
-                                                self.gPathway, self.params,
-                                                self.foldMap, self.directory))
-            self.setFollowOnTarget(queueGenes(self.mutatedList[1:], self.paradigmSetup,
-                                              self.gPathway, self.params, self.foldMap,
-                                              self.directory,
-                                              appendFeatures = htmlFeatures))
-        else:
-            if os.path.exists(htmlDir):
-                self.setFollowOnTarget(pshiftReport(htmlFeatures, "%s/%s" % (htmlDir, self.params.cohort), self.directory))
-
-class branchGenes(Target):
-    def __init__(self, mutatedList, paradigmSetup, gPathway, params, foldMap, directory):
-        Target.__init__(self, time=10000)
-        self.mutatedList = mutatedList
-        self.paradigmSetup = paradigmSetup
-        self.gPathway = gPathway
-        self.params = params
-        self.foldMap = foldMap
-        self.directory = directory
-    def run(self):
-        os.chdir(self.directory)
-        
-        ## branch genes
-        htmlFeatures = []
-        if not os.path.exists("analysis"):
-            system("mkdir analysis")
-        for mutatedFeature in self.mutatedList:
-            if not os.path.exists("analysis/%s" % (mutatedFeature.gene)):
-                system("mkdir analysis/%s" % (mutatedFeature.gene))
-                htmlFeatures.append(mutatedFeature.gene)
-                self.addChildTarget(branchFolds(mutatedFeature, self.paradigmSetup,
-                                                self.gPathway, self.params,
-                                                self.foldMap, self.directory))
-        if os.path.exists(htmlDir):
-            self.setFollowOnTarget(pshiftReport(htmlFeatures, "%s/%s" % (htmlDir, self.params.cohort), self.directory))
-
-class branchFolds(Target):
-    def __init__(self, mutatedFeature, paradigmSetup, gPathway, params, foldMap, directory):
-        Target.__init__(self, time=10000)
-        self.mutatedFeature = mutatedFeature
-        self.paradigmSetup = paradigmSetup
-        self.gPathway = gPathway
-        self.params = params
-        self.foldMap = foldMap
-        self.directory = directory
-    def run(self):
-        shiftDir = "%s/analysis/%s" % (self.directory, self.mutatedFeature.gene)
-        os.chdir(shiftDir)
-        random.seed(randSeed+123454321)
-        
-        ## prepare htmlDir
-        
-        ## get proteinFeatures based on maxDist and gPathway
-        system("echo Preparing Genomic Data ... >> progress.log")
-        proteinFeatures = []
-        for feature in getNeighbors(self.mutatedFeature.gene, max(self.params.distance) + 1, self.gPathway.interactions):
-            if self.gPathway.nodes[feature] == "protein":
-                proteinFeatures.append(feature)
-        
-        ## write data
-        system("mkdir data")
-        dataFiles = []
-        if self.paradigmSetup.cnv is not None:
-            dataFiles.append(self.paradigmSetup.cnv)
-        if self.paradigmSetup.exp is not None:
-            dataFiles.append(self.paradigmSetup.exp)
-        if self.paradigmSetup.prot is not None:
-            dataFiles.append(self.paradigmSetup.prot)
-        if self.paradigmSetup.act is not None:
-            dataFiles.append(self.paradigmSetup.act)
-        genData = jtData(self.mutatedFeature.gene, self.paradigmSetup.samples, proteinFeatures, self.paradigmSetup.features, 
-                         dataFiles, self.directory, paradigmPublic = self.paradigmSetup.public,
-                         batchSize = self.paradigmSetup.size)
-        genData.run()
-        for null in range(1, self.paradigmSetup.nulls+1):
-            genData = jtNData(null, self.mutatedFeature.gene, self.paradigmSetup.samples, proteinFeatures, self.paradigmSetup.features,
-                              dataFiles, self.directory, paradigmPublic = self.paradigmSetup.public,
-                              batchSize = self.paradigmSetup.size)
-            genData.run()
-        
-        ## pick samples
-        system("echo Branching Folds and Params... >> progress.log")
-        rRepeats = len(self.foldMap.keys())
-        mFolds = len(self.foldMap[1].keys())
-        if self.foldMap[1][1] is None:
-            mutSamples = self.mutatedFeature.positive
-            nonSamples = self.mutatedFeature.negative
-            foldSamples = {}
-            for r in range(1, rRepeats+1):
-                foldSamples[r] = {}
-                for f in range(1, mFolds+1):
-                    foldSamples[r][f] = []
-                select_mutSamples = deepcopy(mutSamples)
-                select_nonSamples = deepcopy(nonSamples)
-                while len(select_mutSamples)+len(select_nonSamples) > 0:
-                    for f in range(1, mFolds+1):
-                        if len(select_mutSamples) > 0:
-                            foldSamples[r][f].append(select_mutSamples.pop(random.randint(0, 
-                                                                           len(select_mutSamples)-1)))
-                        elif len(select_nonSamples) > 0:
-                            foldSamples[r][f].append(select_nonSamples.pop(random.randint(0, 
-                                                                           len(select_nonSamples)-1)))
-        else:
-            foldSamples = deepcopy(self.foldMap)
-        
-        ## branch folds
-        if self.params.cv:
-            for r in range(1, rRepeats+1):
-                for f in range(1, mFolds+1):
-                    fold = (r-1)*mFolds+f
-                    system("mkdir fold%s" % (fold))
-                    self.addChildTarget(branchParams(fold, self.mutatedFeature,
-                                                     foldSamples[r][f], self.paradigmSetup,
-                                                     self.gPathway, self.params,
-                                                     self.foldMap, self.directory))
-        
-        ## run final
-        self.setFollowOnTarget(branchParams(0, self.mutatedFeature, 
-                                            self.paradigmSetup.samples, self.paradigmSetup,
-                                            self.gPathway, self.params, self.foldMap,
-                                            self.directory))
-
-class branchParams(Target):
-    def __init__(self, fold, mutatedFeature, trainSamples, paradigmSetup, gPathway,
-                 params, foldMap, directory):
-        Target.__init__(self, time=10000)
-        self.fold = fold
-        self.mutatedFeature = mutatedFeature
-        self.trainSamples = trainSamples
-        self.paradigmSetup = paradigmSetup
-        self.gPathway = gPathway
-        self.params = params
-        self.foldMap = foldMap
-        self.directory = directory
-    def run(self):
-        if self.fold == 0:
-            shiftDir = "%s/analysis/%s" % (self.directory, self.mutatedFeature.gene)
-            os.chdir(shiftDir)
-            system("echo Building Final Model ... >> progress.log")
-        else:
-            shiftDir = "%s/analysis/%s/fold%s" % (self.directory, self.mutatedFeature.gene, self.fold)
-            os.chdir(shiftDir)
-        
-        ## average cross validation aucs for final run
-        rRepeats = len(self.foldMap.keys())
-        mFolds = len(self.foldMap[1].keys())
-        if self.fold == 0:
-            aucList = []
-            aucLines = []
-            for r in range(1, rRepeats+1):
-                for f in range(1, mFolds+1):
-                    fold = (r-1)*mFolds+f
-                    if os.path.exists("fold%s/auc.stat" % (fold)):
-                        f = open("fold%s/auc.stat" % (fold), "r")
-                        line = f.readline()
-                        f.close()
-                        (auc_tr, auc_te, mparams) = line.rstrip().split("\t")
-                    else:
-                        (auc_tr, auc_te, mparams) = ("---", "---", "---")
-                    aucList.append(auc_te)
-                    aucLines.append("%s\t%s\t%s\t%s\n" % (fold, auc_tr, auc_te, mparams))
-            o = open("avgAUC.tab", "w")
-            o.write("> %s\tavgAUC:%s\n" % (self.mutatedFeature.gene, mean(aucList)))
-            o.write("# fold\ttrain\ttest\tparams\n")
-            for line in aucLines:
-                o.write(line)
-            o.close()
-        
-        ## branch params
-        for distance in self.params.distance:
-            for thresh in self.params.threshold:
-                for inc in self.params.penalty:
-                    for method in self.params.selection:
-                        system("mkdir param_%s_%s_%s_%s" % (distance, thresh, inc, method))
-                        os.chdir("param_%s_%s_%s_%s" % (distance, thresh, inc, method))
-                        system("cp %s/config.txt config.txt" % (self.paradigmSetup.directory))
-                        system("cp %s/params.txt params.txt" % (self.paradigmSetup.directory))
-                        for file in os.listdir(self.paradigmSetup.directory):
-                            if file.endswith(".imap"):
-                                system("cp %s/%s %s" % (self.paradigmSetup.directory, file, file))
-                            elif file.endswith(".dogma"):
-                                system("cp %s/%s %s" % (self.paradigmSetup.directory, file, file))
-                        os.chdir("..")
-                        self.addChildTarget(prepareNeighborhood(self.fold, 
-                                        self.mutatedFeature, self.trainSamples,
-                                        self.paradigmSetup, distance, thresh, inc, method,
-                                        self.gPathway, self.directory,
-                                        setUpstream = self.params.override[0],
-                                        setDownstream = self.params.override[1],
-                                        linkSearch = self.params.link))
-        
-        ## evaluate models
-        self.setFollowOnTarget(evaluateParams(self.fold, self.mutatedFeature, self.trainSamples, 
-                                              self.paradigmSetup, self.gPathway, 
-                                              self.params, self.directory))
-        
-class prepareNeighborhood(Target):
-    def __init__(self, fold, mutatedFeature, trainSamples, paradigmSetup, dParam,
-                 tParam, iParam, method, gPathway, directory,
-                 setUpstream = None, setDownstream = None, linkSearch = False):
-        Target.__init__(self, time=10000)
-        self.fold = fold
-        self.mutatedFeature = mutatedFeature
-        self.trainSamples = trainSamples
-        self.paradigmSetup = paradigmSetup
-        self.dParam = dParam
-        self.tParam = tParam
-        self.iParam = iParam
-        self.method = method
-        self.gPathway = gPathway
-        self.directory = directory
-        self.setUpstream = setUpstream
-        self.setDownstream = setDownstream
-        self.linkSearch = linkSearch
-    def run(self):
-        if self.fold == 0:
-            shiftDir = "%s/analysis/%s/param_%s_%s_%s_%s" % (self.directory, self.mutatedFeature.gene, 
-                                                             self.dParam, self.tParam, self.iParam, 
-                                                             self.method)
-            os.chdir(shiftDir)
-            system("echo Preparing Network ... >> progress.log")
-        else:
-            shiftDir = "%s/analysis/%s/fold%s/param_%s_%s_%s_%s" % (self.directory,
-                                                                    self.mutatedFeature.gene, self.fold, 
-                                                                    self.dParam, self.tParam, 
-                                                                    self.iParam, self.method)
-            os.chdir(shiftDir)
-        
-        ## get upstream and downstream base pathways per complex
-        system("echo Selecting Mutational Network ... >> progress.log")
-        dataMap = {}
-        assert self.paradigmSetup.exp is not None
-        dataMap["mRNA"] = "%s/full_%s" % (self.mutatedFeature.data, self.paradigmSetup.exp.split("/")[-1])
-        if self.paradigmSetup.act is not None:
-            # dataMap["active"] = "%s" % (self.paradigmSetup.ipl)
-            dataMap["active"] = "%s/full_%s" % (self.mutatedFeature.data, self.paradigmSetup.act.split("/")[-1])
-        positiveSamples = list(set(self.trainSamples) & set(self.mutatedFeature.positive))
-        negativeSamples = list(set(self.trainSamples) & set(self.mutatedFeature.negative))
-        (featureScore, featureRank) = getFeatureScores(dataMap, positiveSamples, 
-                                               negativeSamples, method = self.method,
-                                               outFile = "feature.score")
-        focusPathways = identifyNeighborhoods(self.mutatedFeature.gene, self.gPathway,
-                                              maxDistance = self.dParam)
-        
-        ## select complex pathways that relevant to the mutation (currently no selection)
-        focusScore = {}
-        for index, focusPathway in enumerate(focusPathways):
-            featureValues = []
-            for feature in focusPathway[0][0]["active"]:
-                if feature in featureScore["mRNA"]:
-                    featurePaths = shortestPath(feature, self.mutatedFeature.gene, focusPathway[0][1].interactions)
-                    pathSigns = [signPath(path, focusPathway[0][1].interactions) for path in featurePaths]
-                    try:
-                        featureValues.append((-1)*featureScore["mRNA"][feature]*mean(pathSigns))
-                    except TypeError:
-                        pass
-            for feature in focusPathway[1][0]["mRNA"]:
-                if feature in featureScore["mRNA"]:
-                    featurePaths = shortestPath(self.mutatedFeature.gene, feature, focusPathway[1][1].interactions)
-                    pathSigns = [signPath(path, focusPathway[1][1].interactions) for path in featurePaths]
-                    try:
-                        featureValues.append((1)*featureScore["mRNA"][feature]*mean(pathSigns))
-                    except TypeError:
-                        pass
-            if len(featureValues) > 0:
-                focusScore[index] = mean(featureValues)
-            else:
-                focusScore[index] = 0.0
-        rankFocus = list(set(focusScore.keys()) - set([0]))
-        rankFocus.sort(lambda x, y: cmp(focusScore[x],focusScore[y]))
-        addedFocus = [0]
-        #### while (float(len(addedFocus))/float(len(focusScore.keys())) < 0.5) or (len(addedFocus) < 4):
-        while len(rankFocus) > 0:
-            addedFocus.append(rankFocus.pop(0))
-        
-        uFeatures = {"active" : []}
-        dFeatures = {"mRNA" : [], "active" : []}
-        uBase = Pathway({self.mutatedFeature.gene : self.gPathway.nodes[self.mutatedFeature.gene]}, {})
-        dBase = Pathway({self.mutatedFeature.gene : self.gPathway.nodes[self.mutatedFeature.gene]}, {})
-        for focus in addedFocus:
-            system("echo ... %s >> progress.log" % (focusScore[focus]))
-            uFeatures["active"] = list(set(uFeatures["active"]) | set(focusPathways[focus][0][0]["active"]))
-            dFeatures["mRNA"] = list(set(dFeatures["mRNA"]) | set(focusPathways[focus][1][0]["mRNA"]))
-            dFeatures["active"] = list(set(dFeatures["active"]) | set(focusPathways[focus][1][0]["active"]))
-            uBase = combinePathways(uBase, focusPathways[focus][0][1])
-            dBase = combinePathways(dBase, focusPathways[focus][1][1])
-        uFeatures["active"] = list(set(uFeatures["active"]) - (set(dFeatures["mRNA"]) | set(dFeatures["active"])))
-        wPathway("upstream_base.tab", uBase.nodes, uBase.interactions)
-        wPathway("downstream_base.tab", dBase.nodes, dBase.interactions)
-        
-        ## perform network selection as long as there are sufficient features
-        if len(uFeatures["active"]) >= 4 and len(dFeatures["mRNA"] + dFeatures["active"]) >= 4:
-            isPass = True
-            (uPathway, dPathway) = selectMutNeighborhood(self.mutatedFeature.gene, featureScore, featureRank, uFeatures, dFeatures, uBase, dBase, threshold = self.tParam, penalty = self.iParam)
-            if self.setUpstream is not None:
-                (uNodes, uInteractions) = rPathway(self.setUpstream)
-                uPathway = Pathway(uNodes, uInteractions)
-            if self.setDownstream is not None:
-                (dNodes, dInteractions) = rPathway(self.setDownstream)
-                dPathway = Pathway(dNodes, dInteractions)
-            wPathway("upstream_pathway.tab", uPathway.nodes, uPathway.interactions)
-            wPathway("downstream_pathway.tab", dPathway.nodes, dPathway.interactions)
-            
-            uSelected = list(set(uFeatures["active"]) & set(uPathway.nodes))
-            dSelected = list(set(dFeatures["mRNA"] + dFeatures["active"]) & set(dPathway.nodes))
-        else:
-            isPass = False
-        
-        ## check thresholds
-        if not isPass:
-            system("echo Stop ... >> progress.log")
-            f = open("auc.stat", "w")
-            f.write("---\t---\n")
-            f.close()
-        
-        elif self.linkSearch:
-            self.setFollowOnTarget(runLinkSearch(self.fold, self.mutatedFeature,
-                                                 self.trainSamples, self.paradigmSetup,
-                                                 featureRank, self.tParam, self.iParam,
-                                                 uPathway, dPathway,
-                                                 uBase, dBase, self.directory, shiftDir))
-        else:
-            self.setFollowOnTarget(runPARADIGM(self.fold, self.mutatedFeature,
-                                                self.trainSamples, self.paradigmSetup,
-                                                uPathway, dPathway, shiftDir))
-
-class runLinkSearch(Target):
-    def __init__(self, fold, mutatedFeature, trainSamples, paradigmSetup, featureRank,
-                 tParam, iParam, uPathway, dPathway, uBase, dBase, root, directory):
-        Target.__init__(self, time=10000)
-        self.fold = fold
-        self.mutatedFeature = mutatedFeature
-        self.trainSamples = trainSamples
-        self.paradigmSetup = paradigmSetup
-        self.featureRank = featureRank
-        self.tParam = tParam
-        self.iParam = iParam
-        self.uPathway = uPathway
-        self.dPathway = dPathway
-        self.uBase = uBase
-        self.dBase = dBase
-        self.root = root
-        self.directory = directory
-    def run(self):
-        os.chdir(self.directory)
-        
-        ## assert links.tab exists
-        assert os.path.exists("%s/links.tab" % (self.root))
-        (lNodes, lInteractions) = rPathway("%s/links.tab" % (self.root))
-        
-        ## determine possible additions
-        upstreamAdditions = []
-        downstreamAdditions = []
-        for source in lInteractions:
-            for target in lInteractions[source]:
-                if target in self.uBase.nodes:
-                    if lInteractions[source][target].startswith("-a"):
-                        if source in self.uBase.interactions:
-                            if target not in self.uBase.interactions[source]:
-                                upstreamAdditions.append( (source, target, lInteractions[source][target]) )
-                        elif source not in self.uBase.nodes:
-                            upstreamAdditions.append( (source, target, lInteractions[source][target]) )
-                if source in self.dBase.nodes:
-                    if lInteractions[source][target].startswith("-t"):
-                        if source in self.dBase.interactions:
-                            if target not in self.dBase.interactions[source]:
-                                downstreamAdditions.append( (source, target, lInteractions[source][target]) )
-                        else:
-                            downstreamAdditions.append( (source, target, lInteractions[source][target]) )
-        ## score and determine tested additions
-        additionMap = {}
-        additionRank = {}
-        index = 1
-        for addition in upstreamAdditions:
-            log("Candidate: %s, %s, %s\n" % addition, file = "addition.log")
-            if addition[0] not in self.featureRank:
+    def __init__(self):
+        self.random_seed = 0
+        self.n_rounds = 1
+        self.m_folds = 5
+        self.max_distance = [2]
+        self.threshold = [0.84]
+        self.cost = [0.0]
+        self.selection_method = ['tt']
+        self.cross_validation = True
+        self.cross_validation_two_sided = False
+        self.separation_method = 'tt'
+        self.report_directory = 'html'
+    def importConfig(self, config_file):
+        f = open(config_file, 'r')
+        for line in f:
+            if line.isspace():
                 continue
-            elif self.featureRank[addition[0]] >= self.tParam:
-                log("u%s - %s\n" % (index, addition), file = "addition.log")
-                additionMap["u%s" % (index)] = addition
-                additionRank["u%s" % (index)] = self.featureRank[addition[0]]
-                index += 1
-        index = 1
-        for addition in downstreamAdditions:
-            log("Candidate: %s, %s, %s\n" % addition, file = "addition.log")
-            if addition[1] not in self.featureRank:
-                continue
-            elif self.featureRank[addition[1]] >= self.tParam:
-                log("d%s - %s\n" % (index, addition), file = "addition.log")
-                additionMap["d%s" % (index)] = addition
-                additionRank["d%s" % (index)] = self.featureRank[addition[1]]
-                index += 1
-        rankAddition = additionMap.keys()
-        rankAddition.sort(lambda x, y: cmp(additionRank[y],additionRank[x]))
-        if len(rankAddition) > 15:
-            for i in rankAddition[15:]:
-                if i in additionMap:
-                    del additionMap[i]
-        
-        ## get baseline PARADIGM-SHIFT auc
-        system("mkdir iter_0")
-        wPathway("iter_0/upstream_pathway.tab", self.uPathway.nodes, self.uPathway.interactions)
-        wPathway("iter_0/downstream_pathway.tab", self.dPathway.nodes, self.dPathway.interactions)
-        system("cp config.txt iter_0/config.txt")
-        system("cp params.txt iter_0/params.txt")
-        for file in os.listdir("."):
-            if file.endswith(".imap"):
-                system("cp %s iter_0/%s" % (file, file))
-            elif file.endswith(".dogma"):
-                system("cp %s iter_0/%s" % (file, file))
-        self.addChildTarget(runPARADIGM(self.fold, self.mutatedFeature, 
-                                        self.trainSamples, self.paradigmSetup, self.uPathway, 
-                                        self.dPathway, "%s/iter_0" % (self.directory)))
-        self.setFollowOnTarget(branchLinkSearch(self.fold, self.mutatedFeature,
-                                        self.trainSamples, self.paradigmSetup,
-                                        self.uPathway, self.dPathway,
-                                        self.uBase, self.dBase, Pathway(lNodes, lInteractions),
-                                        1, 5, [], additionMap, self.directory))
-
-class branchLinkSearch(Target):
-    def __init__(self, fold, mutatedFeature, trainSamples, paradigmSetup, uPathway, 
-                 dPathway, uBase, dBase, extensions, iter, maxiter, additions, additionMap, directory):
-        Target.__init__(self, time=10000)
-        self.fold = fold
-        self.mutatedFeature = mutatedFeature
-        self.trainSamples = trainSamples
-        self.paradigmSetup = paradigmSetup
-        self.uPathway = uPathway
-        self.dPathway = dPathway
-        self.uBase = uBase
-        self.dBase = dBase
-        self.extensions = extensions
-        self.iter = iter
-        self.maxiter = maxiter
-        self.additions = additions
-        self.additionMap = additionMap
-        self.directory = directory
-    def run(self):
-        os.chdir(self.directory)
-        
-        ## get current pathway
-        currentUp = deepcopy(self.uPathway)
-        currentDown = deepcopy(self.dPathway)
-        for addition in self.additions:
-            if addition.startswith("u"):
-                if self.additionMap[addition][1] not in currentUp.nodes:
-                    addPaths = shortestPath(self.additionMap[addition][1], self.mutatedFeature.gene, self.uBase.interactions)
-                    for path in addPaths:
-                        for i in range(len(path)-1):
-                            currentUp.nodes[path[i]] = self.uBase.nodes[path[i]]
-                            if path[i] not in currentUp.interactions:
-                                currentUp.interactions[path[i]] = {}
-                            currentUp.interactions[path[i]][path[i+1]] = self.uBase.interactions[path[i]][path[i+1]]
-                if self.additionMap[addition][0] not in currentUp.nodes:
-                    currentUp.nodes[self.additionMap[addition][0]] = self.extensions.nodes[self.additionMap[addition][0]]
-                if self.additionMap[addition][0] not in currentUp.interactions:
-                    currentUp.interactions[self.additionMap[addition][0]] = {}
-                currentUp.interactions[self.additionMap[addition][0]][self.additionMap[addition][1]] = self.additionMap[addition][2]
-            else:
-                if self.additionMap[addition][0] not in currentDown.nodes:
-                    addPaths = shortestPath(self.mutatedFeature.gene, self.additionMap[addition][0], self.dBase.interactions)
-                    for path in addPaths:
-                        for i in range(len(path)-1):
-                            currentDown.nodes[path[i+1]] = self.dBase.nodes[path[i+1]]
-                            if path[i] not in currentDown.interactions:
-                                currentDown.interactions[path[i]] = {}
-                            currentDown.interactions[path[i]][path[i+1]] = self.dBase.interactions[path[i]][path[i+1]]
-                if self.additionMap[addition][1] not in currentDown.nodes:
-                    currentDown.nodes[self.additionMap[addition][1]] = self.extensions.nodes[self.additionMap[addition][1]]
-                if self.additionMap[addition][0] not in currentDown.interactions:
-                    currentDown.interactions[self.additionMap[addition][0]] = {}
-                currentDown.interactions[self.additionMap[addition][0]][self.additionMap[addition][1]] = self.additionMap[addition][2]
-        
-        ## for each addition
-        for addition in self.additionMap:
-            if addition in self.additions:
-                continue
-            addUp = deepcopy(currentUp)
-            addDown = deepcopy(currentDown)
-            if addition.startswith("u"):
-                if self.additionMap[addition][1] not in addUp.nodes:
-                    addPaths = shortestPath(self.additionMap[addition][1], self.mutatedFeature.gene, self.uBase.interactions)
-                    for path in addPaths:
-                        for i in range(len(path)-1):
-                            addUp.nodes[path[i]] = self.uBase.nodes[path[i]]
-                            if path[i] not in addUp.interactions:
-                                addUp.interactions[path[i]] = {}
-                            addUp.interactions[path[i]][path[i+1]] = self.uBase.interactions[path[i]][path[i+1]]
-                if self.additionMap[addition][0] not in addUp.nodes:
-                    addUp.nodes[self.additionMap[addition][0]] = self.extensions.nodes[self.additionMap[addition][0]]
-                if self.additionMap[addition][0] not in addUp.interactions:
-                    addUp.interactions[self.additionMap[addition][0]] = {}
-                addUp.interactions[self.additionMap[addition][0]][self.additionMap[addition][1]] = self.additionMap[addition][2]
-            else:
-                if self.additionMap[addition][0] not in addDown.nodes:
-                    addPaths = shortestPath(self.mutatedFeature.gene, self.additionMap[addition][0], self.dBase.interactions)
-                    for path in addPaths:
-                        for i in range(len(path)-1):
-                            addDown.nodes[path[i+1]] = self.dBase.nodes[path[i+1]]
-                            if path[i] not in addDown.interactions:
-                                addDown.interactions[path[i]] = {}
-                            addDown.interactions[path[i]][path[i+1]] = self.dBase.interactions[path[i]][path[i+1]]
-                if self.additionMap[addition][1] not in addDown.nodes:
-                    addDown.nodes[self.additionMap[addition][1]] = self.extensions.nodes[self.additionMap[addition][1]]
-                if self.additionMap[addition][0] not in addDown.interactions:
-                    addDown.interactions[self.additionMap[addition][0]] = {}
-                addDown.interactions[self.additionMap[addition][0]][self.additionMap[addition][1]] = self.additionMap[addition][2]
-            system("mkdir iter_%s-%s" % (self.iter, addition))
-            wPathway("iter_%s-%s/upstream_pathway.tab" % (self.iter, addition), addUp.nodes, addUp.interactions)
-            wPathway("iter_%s-%s/downstream_pathway.tab" % (self.iter, addition), addDown.nodes, addDown.interactions)
-            system("cp config.txt iter_%s-%s/config.txt" % (self.iter, addition))
-            system("cp params.txt iter_%s-%s/params.txt" % (self.iter, addition))
-            for file in os.listdir("."):
-                if file.endswith(".imap"):
-                    system("cp %s iter_%s-%s/%s" % (file, self.iter, addition, file))
-                elif file.endswith(".dogma"):
-                    system("cp %s iter_%s-%s/%s" % (file, self.iter, addition, file))
-            self.addChildTarget(runPARADIGM(self.fold, self.mutatedFeature, 
-                                            self.trainSamples, self.paradigmSetup, addUp, 
-                                            addDown, 
-                                            "%s/iter_%s-%s" % (self.directory, self.iter, addition)))
-        self.setFollowOnTarget(selectLinkOptimum(self.fold, self.mutatedFeature, 
-                                                 self.trainSamples, self.paradigmSetup,
-                                                 self.uPathway, self.dPathway, self.uBase,
-                                                 self.dBase, self.extensions, self.iter,
-                                                 self.maxiter, self.additions,
-                                                 self.additionMap, self.directory))
-
-class selectLinkOptimum(Target):
-    def __init__(self, fold, mutatedFeature, trainSamples, paradigmSetup, uPathway,
-                 dPathway, uBase, dBase, extensions, iter, maxiter, additions, additionMap, directory):
-        Target.__init__(self, time=10000)
-        self.fold = fold
-        self.mutatedFeature = mutatedFeature
-        self.trainSamples = trainSamples
-        self.paradigmSetup = paradigmSetup
-        self.uPathway = uPathway
-        self.dPathway = dPathway
-        self.uBase = uBase
-        self.dBase = dBase
-        self.extensions = extensions
-        self.iter = iter
-        self.maxiter = maxiter
-        self.additions = additions
-        self.additionMap = additionMap
-        self.directory = directory
-    def run(self):
-        os.chdir(self.directory)
-        
-        files = ["auc.stat", "color.map", "down.features", "include.samples",
-                 "mut.circle", "mut.features", "mut.test.scores", "mut.train.scores",
-                 "non.test.scores", "non.train.scores", "null.scores",
-                 "paradigm_down.tab", "paradigm_up.tab", "pshift.train.tab",
-                 "pshift.test.tab", "real.scores", "shift.circle", "sig.tab",
-                 "up.features"]
-        
-        aucDiffs = {}
-        f = open("iter_%s/auc.stat" % (self.iter-1), "r")
-        try:
-            lastAUC = float(f.readline().rstrip("\r\n").split("\t")[0])
-        except ValueError:
-            lastAUC = 0.0
+            pline = line.rstrip().split('\t')
+            if line.startswith('distance') or line.startswith('max_distance'):
+                self.max_distance = [int(item) for item in pline[1].split(',')]
+            elif line.startswith('threshold'):
+                self.threshold = [float(item) for item in pline[1].split(',')]
+            elif line.startswith('cost'):
+                self.cost = [float(item) for item in pline[1].split(',')]
+            elif line.startswith('selection') or line.startswith('selection_method'):
+                self.selection_method = [item for item in pline[1].split(',')]
+            elif line.startswith('cv') or line.startswith('cross_validation'):
+                self.cross_validation = bool(int(pline[1]))
+            elif line.startswith('msep') or line.startswith('separation_method'):
+                self.separation_method = pline[1]
         f.close()
-        for addition in self.additionMap:
-            if os.path.exists("iter_%s-%s/auc.stat" % (self.iter, addition)):
-                f = open("iter_%s-%s/auc.stat" % (self.iter, addition), "r")
-                try:
-                    currentAUC = float(f.readline().rstrip("\r\n").split("\t")[0])
-                except ValueError:
-                    currentAUC = 0.0
+    def setSeed(self, seed_input = None):
+        if seed_input == None:
+            self.random_seed = random.randint(0,999999999)
+        else:
+            if os.path.exists(seed_input):
+                f = open(seed_input, 'r')
+                self.random_seed = int(f.readline().rstrip())
                 f.close()
-                aucDiffs[addition] = currentAUC - lastAUC
-        rankedAdditions = aucDiffs.keys()
-        rankedAdditions.sort(lambda x, y: cmp(aucDiffs[y], aucDiffs[x]))
-        if len(rankedAdditions) == 0:
-            for file in files:
-                if os.path.exists("iter_%s/%s" % (self.iter-1, file)):
-                    system("cp iter_%s/%s %s" % (self.iter-1, file, file))
-        elif aucDiffs[rankedAdditions[0]] <= 0.0:
-            for file in files:
-                if os.path.exists("iter_%s/%s" % (self.iter-1, file)):
-                    system("cp iter_%s/%s %s" % (self.iter-1, file, file))        
-        else:
-            updatedAdditions = deepcopy(self.additions)
-            updatedAdditions.append(rankedAdditions[0])
-            system("ln -s iter_%s-%s iter_%s" % (self.iter, rankedAdditions[0], self.iter))
-            if self.iter >= self.maxiter:
-                for file in files:
-                    if os.path.exists("iter_%s/%s" % (self.iter, file)):
-                        system("cp iter_%s/%s %s" % (self.iter, file, file))
-            elif len(set(self.additionMap.keys()) - set(updatedAdditions)) == 0:
-                for file in files:
-                    if os.path.exists("iter_%s/%s" % (self.iter, file)):
-                        system("cp iter_%s/%s %s" % (self.iter, file, file))
             else:
-                if self.fold == 0:
-                    f = open("../../%s.log" % (self.mutatedFeature.gene), "a")
-                    f.write("%s\t%s\t%s\n" % (self.additionMap[rankedAdditions[0]]))
-                    f.close()
-                self.setFollowOnTarget(branchLinkSearch(self.fold, self.mutatedFeature,
-                                                          self.trainSamples, self.paradigmSetup,
-                                                          self.uPathway, self.dPathway,
-                                                          self.uBase, self.dBase,
-                                                          self.extensions,
-                                                          self.iter+1, self.maxiter,
-                                                          updatedAdditions, self.additionMap,
-                                                          self.directory))
-
-class runPARADIGM(Target):
-    def __init__(self, fold, mutatedFeature, trainSamples, paradigmSetup, uPathway, 
-                 dPathway, directory):
-        Target.__init__(self, time=10000)
-        self.fold = fold
-        self.mutatedFeature = mutatedFeature
-        self.trainSamples = trainSamples
-        self.paradigmSetup = paradigmSetup
-        self.uPathway = uPathway
-        self.dPathway = dPathway
-        self.directory = directory
-    def run(self):
-        os.chdir(self.directory)
-        
-        ## run paradigm (observed and nulls)
-        system("echo Running PARADIGM inference ... >> progress.log")
-        batches = batchCount(len(self.paradigmSetup.samples),
-                             batchSize = self.paradigmSetup.size)
-        if batches == 0:
-            self.addChildTarget(jtCmd("%s -p upstream_pathway.tab -c config.txt -b %s -o %s" % (paradigmExec, "%s/up_" % (self.mutatedFeature.data), "%s_upstream.fa" % (self.mutatedFeature.gene)), self.directory))
-            self.addChildTarget(jtCmd("%s -p downstream_pathway.tab -c config.txt -b %s -o %s" % (paradigmExec, "%s/down_" % (self.mutatedFeature.data), "%s_downstream.fa" % (self.mutatedFeature.gene)), self.directory))
-            for null in range(1, self.paradigmSetup.nulls+1):
-                self.addChildTarget(jtCmd("%s -p upstream_pathway.tab -c config.txt -b %s -o %s" % (paradigmExec, "%s/up_N%s_" % (self.mutatedFeature.data, null), "N%s_%s_upstream.fa" % (null, self.mutatedFeature.gene)), self.directory))
-                self.addChildTarget(jtCmd("%s -p downstream_pathway.tab -c config.txt -b %s -o %s" % (paradigmExec, "%s/down_N%s_" % (self.mutatedFeature.data, null), "N%s_%s_downstream.fa" % (null, self.mutatedFeature.gene)), self.directory))
-        elif self.paradigmSetup.public:
-            system("mkdir outputFiles")
-            for b in range(batches):
-                self.addChildTarget(jtCmd("%s -p upstream_pathway.tab -c config.txt -b %s -o %s" % (paradigmExec, "%s/up_b%s_%s_" % (self.mutatedFeature.data, b, batches), "outputFiles/%s_upstream_b%s_%s.fa" % (self.mutatedFeature.gene, b, batches)), self.directory))
-                self.addChildTarget(jtCmd("%s -p downstream_pathway.tab -c config.txt -b %s -o %s" % (paradigmExec, "%s/down_b%s_%s_" % (self.mutatedFeature.data, b, batches), "outputFiles/%s_downstream_b%s_%s.fa" % (self.mutatedFeature.gene, b, batches)), self.directory))
-                for null in range(1, self.paradigmSetup.nulls+1):
-                    self.addChildTarget(jtCmd("%s -p upstream_pathway.tab -c config.txt -b %s -o %s" % (paradigmExec, "%s/up_N%s_b%s_%s_" % (self.mutatedFeature.data, null, b, batches), "outputFiles/N%s_%s_upstream_b%s_%s.fa" % (null, self.mutatedFeature.gene, b, batches)), self.directory))
-                    self.addChildTarget(jtCmd("%s -p downstream_pathway.tab -c config.txt -b %s -o %s" % (paradigmExec, "%s/down_N%s_b%s_%s_" % (self.mutatedFeature.data, null, b, batches), "outputFiles/N%s_%s_downstream_b%s_%s.fa" % (null, self.mutatedFeature.gene, b, batches)), self.directory))
-        else:
-            system("mkdir outputFiles")
-            for b in range(batches):
-                self.addChildTarget(jtCmd("%s -p upstream_pathway.tab -c config.txt -b %s -o %s -s %s,%s" % (paradigmExec, "%s/up_" % (self.mutatedFeature.data), "outputFiles/%s_upstream_b%s_%s.fa" % (self.mutatedFeature.gene, b, batches), b, batches), self.directory))
-                self.addChildTarget(jtCmd("%s -p downstream_pathway.tab -c config.txt -b %s -o %s -s %s,%s" % (paradigmExec, "%s/down_" % (self.mutatedFeature.data), "outputFiles/%s_downstream_b%s_%s.fa" % (self.mutatedFeature.gene, b, batches), b, batches), self.directory))
-                for null in range(1, self.paradigmSetup.nulls+1):
-                    self.addChildTarget(jtCmd("%s -p upstream_pathway.tab -c config.txt -b %s -o %s -s %s,%s" % (paradigmExec, "%s/up_N%s_" % (self.mutatedFeature.data, null), "outputFiles/N%s_%s_upstream_b%s_%s.fa" % (null, self.mutatedFeature.gene, b, batches), b, batches), self.directory))
-                    self.addChildTarget(jtCmd("%s -p downstream_pathway.tab -c config.txt -b %s -o %s -s %s,%s" % (paradigmExec, "%s/down_N%s_" % (self.mutatedFeature.data, null), "outputFiles/N%s_%s_downstream_b%s_%s.fa" % (null, self.mutatedFeature.gene, b, batches), b, batches), self.directory))
-        self.setFollowOnTarget(collectPARADIGM(self.fold, self.mutatedFeature, 
-                                          self.trainSamples, self.paradigmSetup,
-                                          self.uPathway, self.dPathway, self.directory))
-
-class collectPARADIGM(Target):
-    def __init__(self, fold, mutatedFeature, trainSamples, paradigmSetup, uPathway, 
-                 dPathway, directory):
-        Target.__init__(self, time=10000)
-        self.fold = fold
-        self.mutatedFeature = mutatedFeature
-        self.trainSamples = trainSamples
-        self.paradigmSetup = paradigmSetup
-        self.uPathway = uPathway
-        self.dPathway = dPathway
-        self.directory = directory
-    def run(self):
-        os.chdir(self.directory)
-        
-        batches = batchCount(len(self.paradigmSetup.samples),
-                             batchSize = self.paradigmSetup.size)
-        for b in range(batches):
-            system("cat outputFiles/%s_upstream_b%s_%s.fa >> %s_upstream.fa" % (self.mutatedFeature.gene, b, batches, self.mutatedFeature.gene))
-            system("cat outputFiles/%s_downstream_b%s_%s.fa >> %s_downstream.fa" % (self.mutatedFeature.gene, b, batches, self.mutatedFeature.gene))
-            for null in range(1, self.paradigmSetup.nulls+1):
-                system("cat outputFiles/N%s_%s_upstream_b%s_%s.fa >> N%s_%s_upstream.fa" % (null, self.mutatedFeature.gene, b, batches, null, self.mutatedFeature.gene))
-                system("cat outputFiles/N%s_%s_downstream_b%s_%s.fa >> N%s_%s_downstream.fa" % (null, self.mutatedFeature.gene, b, batches, null, self.mutatedFeature.gene))
-        if os.path.exists("outputFiles"):
-            system("rm -rf outputFiles")
-        
-        self.setFollowOnTarget(pshiftCV(self.fold, self.mutatedFeature, self.trainSamples, self.paradigmSetup, self.uPathway, self.dPathway, self.directory, nulls = self.paradigmSetup.nulls))
-
-class pshiftCV(Target):
-    def __init__(self, fold, mutatedFeature, trainSamples, paradigmSetup, uPathway, 
-                 dPathway, directory, nulls = 10, msepMethod = "tt", alpha = 0.05):
-        Target.__init__(self, time=10000)
-        self.fold = fold
-        self.mutatedFeature = mutatedFeature
-        self.trainSamples = trainSamples
-        self.paradigmSetup = paradigmSetup
-        self.uPathway = uPathway
-        self.dPathway = dPathway
-        self.nulls = nulls
-        self.msepMethod = msepMethod
-        self.alpha = alpha
-        self.directory = directory
-    def run(self):
-        os.chdir(self.directory)
-        
-        ## define sample groups
-        trainGroup = self.trainSamples
-        testGroup = list((set(self.paradigmSetup.samples) - set(self.trainSamples)) & 
-             (set(self.mutatedFeature.positive) | set(self.mutatedFeature.negative)))
-        mutGroup_tr = list(set(self.mutatedFeature.positive) & set(trainGroup))
-        mutGroup_te = list(set(self.mutatedFeature.positive) & set(testGroup))
-        nonGroup_tr = list(set(self.mutatedFeature.negative) & set(trainGroup))
-        nonGroup_te = list(set(self.mutatedFeature.negative) & set(testGroup))
-        
-        ## read paradigm output
-        upScore = rPARADIGM("%s_upstream.fa" % (self.mutatedFeature.gene), 
-                            useRows = self.uPathway.nodes.keys())[1]
-        downScore = rPARADIGM("%s_downstream.fa" % (self.mutatedFeature.gene),
-                            useRows = self.dPathway.nodes.keys())[1]
-        wCRSData("paradigm_up.tab", upScore)
-        wCRSData("paradigm_down.tab", downScore)
-        n_upScore = {}
-        n_downScore = {}
-        for null in range(1, self.nulls+1):
-            if os.path.exists("N%s_%s_upstream.fa" % (null, self.mutatedFeature.gene)):
-                n_upScore[null] = rPARADIGM("N%s_%s_upstream.fa" %
-                                            (null, self.mutatedFeature.gene),
-                                            useRows = [self.mutatedFeature.gene])[1]
-            if os.path.exists("N%s_%s_downstream.fa" % (null, self.mutatedFeature.gene)):
-                n_downScore[null] = rPARADIGM("N%s_%s_downstream.fa" %
-                                              (null, self.mutatedFeature.gene),
-                                              useRows = [self.mutatedFeature.gene])[1]
-    
-        ## score raw shifts
-        rawShift = {}
-        for sample in self.paradigmSetup.samples:
-            if (sample in downScore) and (sample in upScore):
-                rawShift[sample] = (downScore[sample][self.mutatedFeature.gene] -
-                                     upScore[sample][self.mutatedFeature.gene])
-        for sample in self.paradigmSetup.samples:
-            if (sample in downScore) and (sample in upScore):
-                for null in range(1, self.nulls+1):
-                    rawShift["null%s_%s" % (null, sample)] = (
-                                     n_downScore[null][sample][self.mutatedFeature.gene] -
-                                     n_upScore[null][sample][self.mutatedFeature.gene])
-        
-        ## store shifts for mutants and non-mutants normalized by trained non-mutants
-        (nonMean, nonStd) = mean_std([rawShift[sample] for sample in nonGroup_tr])
-        labelMap = {}
-        normShift_tr = {}
-        normShift_te = {}
-        o = open("pshift.train.tab", "w")
-        o.write("> %s\tP-Shifts:Table\n" % (self.mutatedFeature.gene))
-        o.write("# sample\tclass\tP-Shift\n")
-        f = open("mut.train.scores", "w")
-        for sample in mutGroup_tr:
-            labelMap[sample] = 1
-            normShift_tr[sample] = (rawShift[sample]-nonMean)
-            o.write("%s\t+\t%s\n" % (sample, normShift_tr[sample]))
-            f.write("%s\t%s\n" % (sample, normShift_tr[sample]))
-        f.close()
-        f = open("non.train.scores", "w")
-        for sample in nonGroup_tr:
-            labelMap[sample] = 0
-            normShift_tr[sample] = (rawShift[sample]-nonMean)
-            o.write("%s\t-\t%s\n" % (sample, normShift_tr[sample]))
-            f.write("%s\t%s\n" % (sample, normShift_tr[sample]))
-        f.close()
+                self.random_seed = int(seed_input)
+    def printSeed(self):
+        o = open('seed.log', 'w')
+        o.write('%s\n' % (self.random_seed))
         o.close()
-        o = open("pshift.test.tab", "w")
-        o.write("> %s\tP-Shifts:Table\n" % (self.mutatedFeature.gene))
-        o.write("# sample\tclass\tP-Shift\n")
-        f = open("mut.test.scores", "w")
-        for sample in mutGroup_te:
-            labelMap[sample] = 1
-            normShift_te[sample] = (rawShift[sample]-nonMean)
-            o.write("%s\t+\t%s\n" % (sample, normShift_te[sample]))
-            f.write("%s\t%s\n" % (sample, normShift_te[sample]))
-        f.close()
-        f = open("non.test.scores", "w")
-        for sample in nonGroup_te:
-            labelMap[sample] = 0
-            normShift_te[sample] = (rawShift[sample]-nonMean)
-            o.write("%s\t-\t%s\n" % (sample, normShift_te[sample]))
-            f.write("%s\t%s\n" % (sample, normShift_te[sample]))
-        f.close()
-        o.close()
-    
-        ## compute auc from stats
-        absnormShift_tr = {}
-        for sample in normShift_tr:
-            absnormShift_tr[sample] = abs(normShift_tr[sample])
-        sorted_tr = absnormShift_tr.keys()
-        sorted_tr.sort(lambda x, y: cmp(absnormShift_tr[y],absnormShift_tr[x]))
-        auc_tr = computeAUC(sorted_tr, labelMap, normShift_tr)[0]
-        if self.fold != 0:
-            absnormShift_te = {}
-            for sample in normShift_te:
-                absnormShift_te[sample] = abs(normShift_te[sample])
-            sorted_te = normShift_te.keys()
-            sorted_te.sort(lambda x, y: cmp(normShift_te[y],normShift_te[x]))
-            auc_te = computeAUC(sorted_te, labelMap, normShift_te)[0]
+
+class Alterations:
+    """
+    Stores the alterations for a particular analysis run [Paradigm-Shift specific]
+    """
+    def __init__(self, analysis_name, focus_gene, all_samples, positive_samples,
+                 negative_samples = None, directory = '.'):
+        self.analysis_name = analysis_name
+        self.focus_gene = focus_gene
+        self.positive_samples = list(set(positive_samples) & set(all_samples))
+        if negative_samples:
+            self.negative_samples = list(set(negative_samples) & set(all_samples))
         else:
-            auc_te = "---"
-        f = open("auc.stat", "w")
-        f.write("%s\t%s\n" % (auc_tr, auc_te))
-        f.close()
-        
-        ## output files for circle maps
-        if self.fold == 0:
-            f = open("up.features", "w")
-            for feature in (set(upScore[upScore.keys()[0]].keys()) -
-                                    set([self.mutatedFeature.gene])):
-                f.write("%s\n" % (feature))
-            f.close()
-            f = open("down.features", "w")
-            for feature in (set(downScore[downScore.keys()[0]].keys()) - 
-                                        set([self.mutatedFeature.gene])):
-                f.write("%s\n" % (feature))
-            f.close()
-            f = open("mut.features", "w")
-            f.write("%s\n" % (self.mutatedFeature.gene))
-            f.close()
-            f = open("include.samples", "w")
-            for sample in (self.paradigmSetup.samples):
-                f.write("%s\n" % (sample))
-            f.close()
-            f = open("mut.circle", "w")
-            f.write("id")
-            for sample in (self.paradigmSetup.samples):
-                if sample not in rawShift:
-                    continue
-                f.write("\t%s" % (sample))
-            f.write("\n")
-            f.write("*")
-            for sample in (self.paradigmSetup.samples):
-                if sample not in rawShift:
-                    continue
-                if sample in self.mutatedFeature.positive:
-                    f.write("\t1")
-                elif sample in self.mutatedFeature.negative:
-                    f.write("\t0")
+            self.negative_samples = list(set(all_samples) - set(positive_samples))
+        self.directory = re.compile('[\W_]+').sub('_', analysis_name)
+    def getProportion(self):
+        return(float(len(self.positive_samples))/float(len(self.positive_samples) + len(self.negative_samples)))
+
+class Pathway:
+    """
+    Paradigm compatible pathway class [2014-3-11]
+    Dependencies: logger
+    """
+    def __init__(self, input, pid = None):
+        self.nodes = {}
+        self.interactions = {}
+        self.pid = pid
+        if type(input) == types.TupleType:
+            self.nodes = deepcopy(input[0])
+            self.interactions = deepcopy(input[1])
+        elif type(input) == types.StringType:
+            (self.nodes, self.interactions) = self.readSPF(input)
+        else:
+            logger('ERROR: invalid input for pathway import (%s)\n' % (input), die = True)
+    def readSPF(self, input_file):
+        nodes = {}
+        interactions = {}
+        f = open(input_file, 'r')
+        for line in f:
+            if line.isspace():
+                continue
+            pline = line.rstrip().split('\t')
+            if len(pline) == 2:
+                nodes[pline[1]] = pline[0]
+            elif len(pline) == 3:
+                if pline[0] not in interactions:
+                    interactions[pline[0]] = {}
+                if pline[1] not in interactions[pline[0]]:
+                    interactions[pline[0]][pline[1]] = pline[2]
                 else:
-                    f.write("\t0.5")
-            f.write("\n")
-            f.close()
-            f = open("shift.circle", "w")
-            f.write("id")
-            for sample in (self.paradigmSetup.samples):
-                if sample not in rawShift:
-                    continue
-                f.write("\t%s" % (sample))
-            f.write("\n")
-            f.write("*")
-            for sample in (self.paradigmSetup.samples):
-                if sample not in rawShift:
-                    continue
-                f.write("\t%s" % (rawShift[sample]))
-            f.write("\n")
-            f.close()
-            f = open("color.map", "w")
-            f.write("> 1\n0\t255.255.255\n1\t0.0.0\n0.5\t150.150.150\n")
-            f.close()
-
-        ## compute mutant separation
-        if self.fold == 0:
-            msepScore = {}
-            msepScore["real"] = mutSeparation(nonGroup_tr, mutGroup_tr, rawShift, 
-                                              method = self.msepMethod)
-            for null in range(1, self.nulls+1):
-                msepScore["null%s" % (null)] = mutSeparation(["null%s_%s" % (null, sample) 
-                                                             for sample in nonGroup_tr],
-                                                             ["null%s_%s" % (null, sample)
-                                                             for sample in mutGroup_tr],
-                                                             rawShift, 
-                                                             method = self.msepMethod)
-            f = open("real.scores", "w")
-            f.write("%s\n" % (msepScore["real"]))
-            f.close()
-            f = open("null.scores", "w")
-            for null in range(1, self.nulls+1):
-                f.write("%s\n" % (msepScore["null%s" % (null)]))
-            f.close()
-    
-            ## compute background significance
-            realScores = [msepScore["real"]]
-            nullScores = [msepScore[null] for null in list(set(msepScore.keys()) - set(["real"]))]
-            (nullMean, nullStd) = mean_std(nullScores)
-            significanceScore = (realScores[0]-nullMean)/(nullStd+self.alpha)
-        
-            ## output sig.stats
-            f = open("sig.tab", "w")
-            f.write("# gene\tnon_mut\tmut\tmsep\tsignificance\n")
-            f.write("%s\t%s\t%s\t%s\t%s\n" % (self.mutatedFeature.gene, len(nonGroup_tr),
-                                              len(mutGroup_tr), 
-                                              msepScore["real"], significanceScore))
-            f.close()
-        else:
-            f = open("sig.tab", "w")
-            f.write("# gene\tnon_mut\tmut\tmsep\tsignificance\n")
-            f.write("%s\t%s\t%s\t%s\t%s\n" % (self.mutatedFeature.gene,
-                                                  len(nonGroup_tr), len(mutGroup_tr),
-                                                  "---", "---"))
-            f.close()
-
-class evaluateParams(Target):
-    def __init__(self, fold, mutatedFeature, trainSamples, paradigmSetup, gPathway, params, directory):
-        Target.__init__(self, time=10000)
-        self.fold = fold
-        self.mutatedFeature = mutatedFeature
-        self.trainSamples = trainSamples
-        self.paradigmSetup = paradigmSetup
-        self.gPathway = gPathway
-        self.params = params
-        self.directory = directory
-    def run(self):
-        if self.fold == 0:
-            shiftDir = "%s/analysis/%s" % (self.directory, self.mutatedFeature.gene)
-            os.chdir(shiftDir)
-            system("echo Identifying Best Param by Training Validation ... >> progress.log")
-        else:
-            shiftDir = "%s/analysis/%s/fold%s" % (self.directory, self.mutatedFeature.gene, self.fold)
-            os.chdir(shiftDir)
-        
-        ## report AUCs for model with best training validation
-        topAUC_tr = 0
-        topAUC_te = 0
-        topAUC_params = None
-        for distance in self.params.distance:
-            for thresh in self.params.threshold:
-                for inc in self.params.penalty:
-                    for method in self.params.selection:
-                        f = open("param_%s_%s_%s_%s/auc.stat" % (distance, thresh, inc, method), "r")
-                        line = f.readline()
-                        f.close()
-                        (auc_tr, auc_te) = line.rstrip().split("\t")
-                        try:
-                            auc_tr = float(auc_tr)
-                        except ValueError:
-                            continue
-                        try:
-                            auc_te = float(auc_te)
-                        except ValueError:
-                            pass
-                        if auc_tr > topAUC_tr:
-                            topAUC_tr = auc_tr
-                            topAUC_te = auc_te
-                            topAUC_params = [str(distance), str(thresh), str(inc), str(method)]
-        if self.fold != 0:
-            f = open("auc.stat", "w")
-            if topAUC_tr == 0:
-                f.write("NA\tNA\tNA\n")
+                    interactions[pline[0]][pline[1]] += ';' + pline[2]
             else:
-                f.write("%s\t%s\t%s\n" % (topAUC_tr, topAUC_te, ",".join(topAUC_params)))
-            f.close()
-        else:
-            if topAUC_params is not None:
-                self.setFollowOnTarget(mutationSHIFT(topAUC_params, self.mutatedFeature, self.paradigmSetup, self.gPathway, self.directory, clean = self.params.clean))
-            
-class mutationSHIFT(Target):
-    def __init__(self, topAUC_params, mutatedFeature, paradigmSetup, gPathway, directory, clean = True):
-        Target.__init__(self, time=10000)
-        self.topAUC_params = topAUC_params
-        self.mutatedFeature = mutatedFeature
-        self.paradigmSetup = paradigmSetup
-        self.gPathway = gPathway
-        self.directory = directory
-        self.clean = clean
-    def run(self):
-        shiftDir = "%s/analysis/%s" % (self.directory, self.mutatedFeature.gene)
-        os.chdir(shiftDir)
-        
-        ## copy tables
-        system("echo Output Reports ... >> progress.log")
-        system("cp param_%s/sig.tab sig.tab" % ("_".join(self.topAUC_params)))
-        system("cp param_%s/pshift.train.tab pshift.tab" % ("_".join(self.topAUC_params)))
-        
-        ## output msep and background plots
-        system("%s/msep.R %s param_%s/mut.train.scores param_%s/non.train.scores" % (self.directory, 
-                                                 self.mutatedFeature.gene, "_".join(self.topAUC_params), 
-                                                 "_".join(self.topAUC_params)))
-        system("%s/background.R %s param_%s/real.scores param_%s/null.scores" % (self.directory, 
-                                                 self.mutatedFeature.gene, "_".join(self.topAUC_params), 
-                                                 "_".join(self.topAUC_params)))
-        
-        ## prepare web report
-        system("mkdir img")
-        
-        ## draw circles
-        system("cat data/up_%s | transpose.pl > param_%s/exp.tab" % (self.paradigmSetup.exp.split("/")[-1], "_".join(self.topAUC_params)))
-        os.chdir("param_%s" % ("_".join(self.topAUC_params)))
-        system("%s -o \"%s;mut.circle,shift.circle\" -s include.samples -f mut.features ../img/ mut.circle exp.tab paradigm_up.tab paradigm_down.tab shift.circle" % (circleExec, self.mutatedFeature.gene))
-        system("%s -o \"%s;mut.circle,shift.circle\" -s include.samples -f up.features ../img/ mut.circle exp.tab paradigm_up.tab" % (circleExec, self.mutatedFeature.gene))
-        system("%s -o \"%s;mut.circle,shift.circle\" -s include.samples -f down.features ../img/ mut.circle exp.tab paradigm_down.tab" % (circleExec, self.mutatedFeature.gene))
-        os.chdir("..")
-        
-        ## output sif
-        (uNodes, uInteractions) = rPathway("param_%s/upstream_pathway.tab" %
-                                                    ("_".join(self.topAUC_params)))
-        (dNodes, dInteractions) = rPathway("param_%s/downstream_pathway.tab" % 
-                                                    ("_".join(self.topAUC_params)))
-        cPathway = combinePathways(Pathway(uNodes, uInteractions),
-                                   Pathway(dNodes, dInteractions))
-        wSIF("pshift_%s.sif" % (self.mutatedFeature.gene), cPathway.interactions)
-        
-        ## node attributes
-        scoreMap = {}
-        scoreMap["pshift_%s" % (self.mutatedFeature.gene)] = {}
-        for node in self.gPathway.nodes.keys():
-            if node == self.mutatedFeature.gene:
-                scoreMap["pshift_%s" % (self.mutatedFeature.gene)][node] = 10
-            else:
-                scoreMap["pshift_%s" % (self.mutatedFeature.gene)][node] = 7
-        wNodeAttributes(self.gPathway.nodes, scoreMap = scoreMap, directory = "./")
-        
-        ## clean
-        if self.clean:
-            system("rm -rf data")
-
-class pshiftReport(Target):
-    def __init__(self, includeFeatures, reportDir, directory):
-        Target.__init__(self, time=10000)
-        self.includeFeatures = includeFeatures
-        self.reportDir = reportDir
-        self.directory = directory
-    def run(self):
-        os.chdir(self.directory)
-        
-        ## cytoscape-web
-        for gene in self.includeFeatures:
-            if os.path.exists("analysis/%s/sig.tab" % (gene)):
-                tableFiles = []
-                tableFiles.append("analysis/%s/sig.tab" % (gene))
-                tableFiles.append("msepPlot:analysis/%s/%s.msep.pdf" % (gene, gene))
-                tableFiles.append("backgroundPlot:analysis/%s/%s.background.pdf" %
-                                                                             (gene, gene))
-                tableFiles.append("analysis/%s/avgAUC.tab" % (gene))
-                tableFiles.append("analysis/%s/pshift.tab" % (gene))
-                system("pathmark-report.py -t %s analysis/%s %s" %
-                                             (",".join(tableFiles), gene, self.reportDir))
-                system("cp analysis/%s/pshift* %s" % (gene, self.reportDir))
-
-def main():
-    ## check for fresh run
-    if os.path.exists(".jobTree"):
-        print "WARNING: .jobTree directory detected, remove it first to start a fresh run"
-    
-    ## parse arguments
-    parser = OptionParser(usage = "%prog [options] paradigmDir mutFile ")
-    Stack.addJobTreeOptions(parser)
-    parser.add_option("--jobFile", help="Add as child of jobFile rather than new jobTree")
-    parser.add_option("-c", "--config", dest="configFile", default=None)
-    parser.add_option("-s", "--samples", dest="includeSamples", default=None)
-    parser.add_option("-f", "--features", dest="includeFeatures", default=None)
-    parser.add_option("-p", "--public", action="store_true", dest="paradigmPublic",
-                      default=False)
-    parser.add_option("-b", "--batchSize", dest="batchSize", default=50)
-    parser.add_option("-n", "--nulls", dest="nulls", default=30)
-    options, args = parser.parse_args()
-    print "Using Batch System '%s'" % (options.batchSystem)
-    
-    if len(args) == 1:
-        if args[0] == "clean":
-            cmd = "rm -rf .jobTree analysis *.R"
-            print cmd
-            os.system(cmd)
-            sys.exit(0)
-    
-    assert len(args) == 2
-    paradigmDir = os.path.abspath(args[0])
-    mutFile = args[1]
-    
-    ## get params
-    params = Parameters()
-    if options.configFile:
-        params.set(options.configFile)
-    
-    ## foldMap
-    rRepeats = 1
-    mFolds = 5
-    foldMap = {}
-    if os.path.exists("fold.map"):
-        (mapData, mapSamples, mapRepeats) = rCRSData("fold.map", retFeatures = True)
-        for r, row in enumerate(mapRepeats):
-            foldMap[r+1] = {}
-            for col in mapSamples:
-                mFolds = max(mFolds, int(mapData[col][row]))
-            for m in range(mFolds):
-                foldMap[r+1][m+1] = []
-            for col in mapSamples:
-                foldMap[r+1][int(mapData[col][row])].append(col)
-            if (r+1) == rRepeats:
+                logger('ERROR: line length not 2 or 3 (%s)\n' % (line), die = True)
+        f.close()
+        return(nodes, interactions)
+    def writeSPF(self, output_file, reverse = False):
+        o = open(output_file, 'w')
+        for node in self.nodes:
+            o.write('%s\t%s\n' % (self.nodes[node], node))
+        for source in self.interactions:
+            for target in self.interactions[source]:
+                for interaction in self.interactions[source][target].split(';'):
+                    o.write('%s\t%s\t%s\n' % (source, target, interaction))
+        o.close()
+    def writeSIF(self, output_file):
+        o = open(output_file, 'w')
+        for source in self.interactions:
+            for target in self.interactions[source]:
+                for interaction in self.interactions[source][target].split(';'):
+                    o.write('%s\t%s\t%s\n' % (source, interaction, target))
+        o.close()
+    def reverse(self):
+        reversed_interactions = {}
+        for source in self.interactions:
+            for target in self.interactions[source]:
+                if target not in reversed_interactions:
+                    reversed_interactions[target] = {}
+                reversed_interactions[target][source] = self.interactions[source][target]
+        return(reversed_interactions)
+    def getShortestPaths(self, source, target, max_distance = None):
+        shortest_paths = []
+        all_walks = [[source]]
+        while len(shortest_paths) == 0:
+            next_walks = []
+            while len(all_walks) > 0:
+                current_walk = all_walks.pop()
+                if current_walk[-1] not in self.interactions:
+                    continue
+                for intermediate in self.interactions[current_walk[-1]]:
+                    if intermediate in current_walk:
+                        continue
+                    if intermediate == target:
+                        complete_walk = current_walk + [intermediate]
+                        shortest_paths.append([(complete_walk[index], 
+                                              self.interactions[complete_walk[index]][complete_walk[index + 1]],
+                                              complete_walk[index + 1])
+                                              for index in range(len(complete_walk) - 1)])
+                    next_walks.append(current_walk + [intermediate])
+            if len(next_walks) == 0:
                 break
+            if max_distance is not None:
+                if len(next_walks[0]) >= max_distance + 1:
+                    break
+            all_walks = deepcopy(next_walks)
+        return(shortest_paths)
+    def getAllPaths(self, source, target, max_distance):
+        all_paths = []
+        all_walks = [[source]]
+        for distance in range(1, max_distance + 1):
+            next_walks = []
+            while len(all_walks) > 0:
+                current_walk = all_walks.pop()
+                if current_walk[-1] not in self.interactions:
+                    continue
+                for intermediate in self.interactions[current_walk[-1]]:
+                    if intermediate in current_walk:
+                        continue
+                    if intermediate == target:
+                        complete_walk = current_walk + [intermediate]
+                        all_paths.append([(complete_walk[index], 
+                                         self.interactions[complete_walk[index]][complete_walk[index + 1]],
+                                         complete_walk[index + 1])
+                                         for index in range(len(complete_walk) - 1)])
+                    next_walks.append(current_walk + [intermediate])
+            if len(next_walks) == 0:
+                break
+            all_walks = deepcopy(next_walks)
+        return(all_paths)
+    def getNeighbors(self, node, max_distance):
+        reversed_interactions = self.reverse()
+        seen_nodes = set([node])
+        border_nodes = [node]
+        frontier_nodes = []
+        for distance in range(max_distance):
+            while len(border_nodes) > 0:
+                current_node = border_nodes.pop()
+                if current_node in self.interactions:
+                    for target in self.interactions[current_node]:
+                        if target not in seen_nodes:
+                            seen_nodes.update([target])
+                            frontier_nodes.append(target)
+                if current_node in reversed_interactions:
+                    for source in reversed_interactions[current_node]:
+                        if source not in seen_nodes:
+                            seen_nodes.update([source])
+                            frontier_nodes.append(source)
+            border_nodes = deepcopy(frontier_nodes)
+            frontier_nodes = []
+        return(list(seen_nodes))
+    def subsetPathway(self, subsetted_nodes):
+        subsetted_pathway = Pathway( ({}, {}) )
+        for source in subsetted_nodes:
+            if source not in subsetted_pathway.nodes:
+                subsetted_pathway.nodes[source] = self.nodes[source]
+            if source in self.interactions:
+                for target in self.interactions[source]:
+                    if target not in subsetted_nodes:
+                        continue
+                    if target not in subsetted_pathway.nodes:
+                        subsetted_pathway.nodes[target] = self.nodes[target]
+                    if source not in subsetted_pathway.interactions:
+                        subsetted_pathway.interactions[source] = {}
+                    subsetted_pathway.interactions[source][target] = self.interactions[source][target]
+        return(subsetted_pathway)
+    def appendPathway(self, append_pathway):
+        for source in append_pathway.interactions:
+            if source not in self.nodes:
+                self.nodes[source] = append_pathway.nodes[source]
+            for target in append_pathway.interactions[source]:
+                if target not in self.nodes:
+                    self.nodes[target] = append_pathway.nodes[target]
+                if source not in self.interactions:
+                    self.interactions[source] = {}
+                if target not in self.interactions[source]:
+                    self.interactions[source][target] = append_pathway.interactions[source][target]
+                else:
+                    self.interactions[source][target] = ';'.join(list(set(self.interactions[source][target].split(';')) |
+                                                                      set(append_pathway.interactions[source][target].split(';'))))
+
+## ps functions
+def logger(message, file = None, die = False):
+    """
+    Writes messages to standard error [2014-3-1]
+    """
+    if file is None:
+        sys.stderr.write(message)
     else:
-        for r in range(1, rRepeats+1):
-            foldMap[r] = {}
-            for m in range(1, mFolds+1):
-                foldMap[r][m] = None
-    
-    ## get paradigm files
-    paradigmSetup = ParadigmSetup(paradigmDir, options.includeSamples,
-                                  public = options.paradigmPublic,
-                                  size = int(options.batchSize),
-                                  nulls = int(options.nulls))
-    
-    ## get pathway
-    (gNodes, gInteractions) = rPathway(paradigmSetup.pathway)
-    gPathway = Pathway(gNodes, gInteractions)
-    
-    ## get mutation annotations
-    mutatedList = []
-    mutatedMap = {}
-    f = open(mutFile, "r")
+        o = open(file, 'a')
+        o.write(message)
+        o.close()
+    if die:
+        sys.exit(1)
+
+def returnRows(input_file, sep = '\t', index = 0, header = True):
+    """
+    Returns the rows of a file without loading it into memory [2014-3-1]
+    Dependencies: logger
+    """
+    rows = []
+    f = open(input_file, 'r')
+    if header:
+        line = f.readline()
+        if line.isspace():
+            logger('ERROR: encountered a blank header\n', die = True)
     for line in f:
         if line.isspace():
             continue
-        pline = line.rstrip().split("\t")
-        if len(pline) == 3:
-            mutatedFeature = Mutated(pline[0], paradigmSetup.samples, pline[2].split(","),
-                                     negative = None, directory = os.getcwd())
-        elif len(pline) == 4:
-            mutatedFeature = Mutated(pline[0], paradigmSetup.samples, pline[2].split(","),
-                                     negative = pline[3].split(","),
-                                     directory = os.getcwd())
-        if mutatedFeature.gene in gPathway.nodes:
-            if len(mutatedFeature.positive) >= mutationThreshold:
-                mutatedMap[mutatedFeature.gene] = mutatedFeature
-                mutatedList.append(mutatedFeature.gene)
+        rows.append(line.rstrip().split(sep)[index])
     f.close()
-    if options.includeFeatures:
-        mutatedList = []
-        for gene in rList(options.includeFeatures):
-            if gene in mutatedMap:
-                mutatedList.append(gene)
-    submitList = []
-    for gene in mutatedList:
-        submitList.append(deepcopy(mutatedMap[gene]))
-        if len(submitList) >= maxFeatures:
+    return(rows)
+
+def returnColumns(input_file, sep = '\t', index = 0):
+    """
+    Returns the columns of a file without loading it into memory [2014-3-1]
+    Dependencies: logger
+    """
+    f = open(input_file, 'r')
+    if index > 0:
+        for n in range(index):
+            f.readline()
+    line = f.readline().rstrip()
+    if line.isspace():
+        logger('ERROR: encountered a blank header\n', die = True)
+    f.close()
+    return(line.split(sep)[1:])
+
+def readList(input_file, header = False):
+    """
+    Reads in a simple one column list [2014-3-1]
+    """
+    input_list = []
+    f = open(input_file, 'r')
+    if header:
+        f.readline()
+    for line in f:
+        if line.isspace():
+            continue
+        input_list.append(line.rstrip())
+    f.close()
+    return(input_list)
+
+def getFullNeighborhood(focus_gene, global_pathway, max_distance = 2):
+    """
+    Simplifies complex interactions to match the Paradigm-Shift inference model [Paradigm-Shift specific]
+    """
+    def globComplexes(focus_gene, global_pathway):
+        group_index = {0 : [focus_gene]}
+        if focus_gene not in global_pathway.interactions:
+            return(group_index)
+        focus_complexes = []
+        for target in global_pathway.interactions[focus_gene]:
+            if global_pathway.interactions[focus_gene][target] == 'component>':
+                focus_complexes.append(target)
+        seen_complexes = set()
+        grouped_complexes = []
+        while len(focus_complexes) > 0:
+            current_complex = focus_complexes.pop(0)
+            if current_complex in seen_complexes:
+                continue
+            seen_complexes.update([current_complex])
+            current_group = [current_complex]
+            border_nodes = [current_complex]
+            while len(border_nodes) > 0:
+                current_node = border_nodes.pop(0)
+                if current_node in global_pathway.interactions:
+                    for target in global_pathway.interactions[current_node]:
+                        if global_pathway.interactions[current_node][target] == 'component>' and global_pathway.nodes[target] == 'complex' and target not in seen_complexes:
+                            current_group.append(target)
+                            border_nodes.append(target)
+                            seen_complexes.update([target])
+            grouped_complexes.append(deepcopy(current_group))
+        for index, group in enumerate(grouped_complexes):
+            group_index[index + 1] = deepcopy(group)
+        return(group_index)
+    def searchUpstream(focus_gene, focus_group, global_pathway, reversed_interactions, max_distance = 2):
+        upstream_pathway = Pathway( ({focus_gene : global_pathway.nodes[focus_gene]}, {}) )
+        seen_nodes = set(focus_group)
+        seen_nodes.update([focus_gene])
+        border_nodes = deepcopy(focus_group)
+        frontier_nodes = []
+        for distance in range(1, max_distance + 1):
+            while(len(border_nodes) > 0):
+                current_node = border_nodes.pop(0)
+                if current_node in reversed_interactions:
+                    for source in reversed_interactions[current_node]:
+                        if source == focus_gene:
+                            continue
+                        elif global_pathway.nodes[source] == 'abstract':
+                            continue
+                        elif distance == 1:
+                            if reversed_interactions[current_node][source] == 'component>':
+                                if global_pathway.nodes[source] == 'complex' and source not in seen_nodes:
+                                    border_nodes.append(source)
+                                    seen_nodes.update([source])
+                                elif global_pathway.nodes[source] == 'protein' or global_pathway.nodes[source] == 'family':
+                                    upstream_pathway.nodes[source] = global_pathway.nodes[source]
+                                    if source not in upstream_pathway.interactions:
+                                        upstream_pathway.interactions[source] = {}
+                                    upstream_pathway.interactions[source][focus_gene] = '-a>'
+                                    frontier_nodes.append(source)
+                                    seen_nodes.update([source])
+                            elif reversed_interactions[current_node][source].startswith('-a') or reversed_interactions[current_node][source].startswith('-t'):
+                                upstream_pathway.nodes[source] = global_pathway.nodes[source]
+                                if source not in upstream_pathway.interactions:
+                                    upstream_pathway.interactions[source] = {}
+                                upstream_pathway.interactions[source][focus_gene] = reversed_interactions[current_node][source]
+                                frontier_nodes.append(source)
+                                seen_nodes.update([source])
+                        elif source in upstream_pathway.nodes:
+                            upstream_pathway.interactions[source][current_node] = reversed_interactions[current_node][source]
+                        else:
+                            upstream_pathway.nodes[source] = global_pathway.nodes[source]
+                            if source not in upstream_pathway.interactions:
+                                upstream_pathway.interactions[source] = {}
+                            upstream_pathway.interactions[source][current_node] = reversed_interactions[current_node][source]
+                            frontier_nodes.append(source)
+                            seen_nodes.update([source])
+            border_nodes = deepcopy(frontier_nodes)
+        return(upstream_pathway)
+    def searchDownstream(focus_gene, focus_group, global_pathway, reversed_interactions, max_distance = 2):
+        downstream_pathway = Pathway( ({focus_gene : global_pathway.nodes[focus_gene]}, {}) )
+        seen_nodes = set(focus_group)
+        seen_nodes.update([focus_gene])
+        border_nodes = deepcopy(focus_group)
+        frontier_nodes = []
+        for distance in range(1, max_distance + 1):
+            while(len(border_nodes) > 0):
+                current_node = border_nodes.pop(0)
+                if current_node in global_pathway.interactions:
+                    for target in global_pathway.interactions[current_node]:
+                        if target == focus_gene:
+                            continue
+                        elif global_pathway.nodes[target] == 'abstract':
+                            continue
+                        elif distance == 1:
+                            if global_pathway.interactions[current_node][target] == 'component>':
+                                continue
+                            elif global_pathway.interactions[current_node][target].startswith('-a') or global_pathway.interactions[current_node][target].startswith('-t'):
+                                downstream_pathway.nodes[target] = global_pathway.nodes[target]
+                                if focus_gene not in downstream_pathway.interactions:
+                                    downstream_pathway.interactions[focus_gene] = {}
+                                downstream_pathway.interactions[focus_gene][target] = global_pathway.interactions[current_node][target]
+                                frontier_nodes.append(target)
+                                seen_nodes.update([target])
+                        elif target in downstream_pathway.nodes:
+                            if current_node not in downstream_pathway.interactions:
+                                downstream_pathway.interactions[current_node] = {}
+                            downstream_pathway.interactions[current_node][target] = global_pathway.interactions[current_node][target]
+                        else:
+                            downstream_pathway.nodes[target] = global_pathway.nodes[target]
+                            if current_node not in downstream_pathway.interactions:
+                                downstream_pathway.interactions[current_node] = {}
+                            downstream_pathway.interactions[current_node][target] = global_pathway.interactions[current_node][target]
+                            frontier_nodes.append(target)
+                            seen_nodes.update([target])
+            border_nodes = deepcopy(frontier_nodes)
+        return(downstream_pathway)
+    
+    reversed_interactions = global_pathway.reverse()
+    group_index = globComplexes(focus_gene, global_pathway)
+    group_pathways = {}
+    for index in group_index:
+        group_pathways[index] = [deepcopy(searchUpstream(focus_gene, group_index[index], global_pathway, reversed_interactions)),
+                                 deepcopy(searchDownstream(focus_gene, group_index[index], global_pathway, reversed_interactions))]
+    return(group_index, group_pathways)
+
+def getRelevantPaths(focus_gene, upstream_pathway, downstream_pathway, max_distance = 2):
+    """
+    Identifies relevant paths between features and the focus gene [Paradigm-Shift specific]
+    """
+    upstream_path_map = {}
+    downstream_path_map = {}
+    for node in upstream_pathway.nodes:
+        if node == focus_gene:
+            continue
+        all_paths = upstream_pathway.getAllPaths(node, focus_gene, max_distance)
+        legal_paths = []
+        for path in all_paths:
+            if upstream_pathway.nodes[path[0][0]] == 'protein':
+                legal_paths.append(path)
+        if len(legal_paths) > 0:
+            upstream_path_map[node] = deepcopy(legal_paths)
+    for node in downstream_pathway.nodes:
+        if node == focus_gene:
+            continue
+        all_paths = downstream_pathway.getAllPaths(focus_gene, node, max_distance)
+        legal_paths = []
+        for path in all_paths:
+            if downstream_pathway.nodes[path[-1][2]] == 'protein' and path[-1][1].startswith('-t'):
+                legal_paths.append(path)
+        if len(legal_paths) > 0:
+            downstream_path_map[node] = deepcopy(legal_paths)
+    return(upstream_path_map, downstream_path_map)
+
+def computeFeatureScores(data_map, positive_samples, negative_samples, method = 'variance'):
+    def getScoreByVariance(data_frame, all_samples):
+        score_map = {}
+        for feature in data_frame.columns:
+            score_map[feature] = computeMean(list(data_frame[feature].loc[all_samples]), return_sd = True, sample_sd = True)[1]
+        return(score_map)
+    def getScoreByWelchsTT(data_frame, positive_samples, negative_samples):
+        score_map = {}
+        for feature in data_frame.columns:
+            score_map[feature] = computeWelchsT(list(data_frame[feature].loc[positive_samples]), list(data_frame[feature].loc[negative_samples]), alpha = 0.0, return_df = False)
+        return(score_map)
+    
+    all_samples = list(set(positive_samples) | set(negative_samples))
+    score_map = {}
+    for attachment in data_map:
+        if method == 'variance':
+            score_map[attachment] = getScoreByVariance(data_map[attachment], all_samples)
+        elif method == 'tt':
+            score_map[attachment] = getScoreByWelchsTT(data_map[attachment], positive_samples, negative_samples)
+    data_frame = pandas.DataFrame(score_map)
+    data_frame.to_csv('feature.scores', sep = '\t', na_rep = 'NA')
+    return(score_map)
+
+def computeFeatureRanks(score_map):
+    rank_map = {}
+    for attachment in score_map:
+        rank_map[attachment] = {}
+        ranked_features = []
+        for feature in score_map[attachment]:
+            try:
+                fval = float(score_map[attachment][feature])
+                if fval != fval:
+                    raise ValueError
+                ranked_features.append(feature)
+            except ValueError:
+                rank_map[attachment][feature] = 0
+        ranked_features.sort(lambda x, y: cmp(abs(score_map[attachment][x]), abs(score_map[attachment][y])))
+        for index, feature in enumerate(ranked_features):
+            rank_map[attachment][feature] = float(index + 1)/len(ranked_features)
+    return(rank_map)
+
+def getSelectedNeighborhood(focus_gene, data_map, positive_samples, negative_samples, upstream_path_map, downstream_path_map, upstream_pathway, downstream_pathway, threshold = 0.84, cost = 0.0, method = 'variance'):
+    def getUpstreamValue(feature, value_map):
+        value_list = []
+        if 'mrna' in value_map:
+            if feature in value_map['mrna']:
+                try:
+                    fval = abs(float(value_map['mrna'][feature]))
+                    if fval != fval:
+                        raise ValueError
+                except ValueError:
+                    fval = 0
+            else:
+                fval = 0
+            value_list.append(fval)
+        if 'active' in value_map:
+            if feature in value_map['active']:
+                try:
+                    fval = abs(float(value_map['active'][feature]))
+                    if fval != fval:
+                        raise ValueError
+                except ValueError:
+                    fval = 0
+            else:
+                fval = 0
+            value_list.append(fval)
+        return(max(value_list))
+    def getDownstreamValue(feature, value_map):
+        value_list = []
+        if 'mrna' in value_map:
+            if feature in value_map['mrna']:
+                try:
+                    fval = abs(float(value_map['mrna'][feature]))
+                    if fval != fval:
+                        raise ValueError
+                except ValueError:
+                    fval = 0
+            else:
+                fval = 0
+            value_list.append(fval)
+        return(max(value_list))
+    
+    score_map = computeFeatureScores(data_map, positive_samples, negative_samples, method = method)
+    rank_map = computeFeatureRanks(score_map)
+    logger('## upstream neighborhood\n', file = 'selection.log')
+    selected_upstream_pathway = Pathway( ({focus_gene : upstream_pathway.nodes[focus_gene]}, {}) )
+    selected_upstream_features = []
+    ranked_upstream_features = []
+    for feature in upstream_path_map:
+        if getUpstreamValue(feature, rank_map) > 0:
+            ranked_upstream_features.append(feature)
+    ranked_upstream_features.sort(lambda x, y: cmp(getUpstreamValue(y, rank_map), getUpstreamValue(x, rank_map)))
+    while (len(selected_upstream_features) < 4) or (getUpstreamValue(ranked_upstream_features[0], rank_map) >= threshold + cost*len(selected_upstream_features)):
+        current_feature = ranked_upstream_features.pop(0)
+        logger('%s\t%s\t%s\t%s\n' % (current_feature, getUpstreamValue(current_feature, rank_map), len(selected_upstream_features), upstream_path_map[current_feature]), file = 'selection.log')
+        selected_upstream_features.append(current_feature)
+        for path in upstream_path_map[current_feature]:
+            for edge in path:
+                if edge[0] not in selected_upstream_pathway.nodes:
+                    selected_upstream_pathway.nodes[edge[0]] = upstream_pathway.nodes[edge[0]]
+                if edge[2] not in selected_upstream_pathway.nodes:
+                    selected_upstream_pathway.nodes[edge[2]] = upstream_pathway.nodes[edge[2]]
+                if edge[0] not in selected_upstream_pathway.interactions:
+                    selected_upstream_pathway.interactions[edge[0]] = {}
+                selected_upstream_pathway.interactions[edge[0]][edge[2]] = edge[1]
+        if len(ranked_upstream_features) == 0:
             break
+    logger('## downstream neighborhood\n', file = 'selection.log')
+    selected_downstream_pathway = Pathway( ({focus_gene : downstream_pathway.nodes[focus_gene]}, {}) )
+    selected_downstream_features = []
+    ranked_downstream_features = []
+    for feature in downstream_path_map:
+        if getDownstreamValue(feature, rank_map) > 0:
+            ranked_downstream_features.append(feature)
+    ranked_downstream_features.sort(lambda x, y: cmp(getDownstreamValue(y, rank_map), getDownstreamValue(x, rank_map)))
+    while (len(selected_downstream_features) < 4) or (getDownstreamValue(ranked_downstream_features[0], rank_map) >= threshold + cost*len(selected_downstream_features)):
+        current_feature = ranked_downstream_features.pop(0)
+        logger('%s\t%s\t%s\t%s\n' % (current_feature, getDownstreamValue(current_feature, rank_map), len(selected_downstream_features), downstream_path_map[current_feature]), file = 'selection.log')
+        selected_downstream_features.append(current_feature)
+        for path in downstream_path_map[current_feature]:
+            for edge in path:
+                if edge[0] not in selected_downstream_pathway.nodes:
+                    selected_downstream_pathway.nodes[edge[0]] = downstream_pathway.nodes[edge[0]]
+                if edge[2] not in selected_downstream_pathway.nodes:
+                    selected_downstream_pathway.nodes[edge[2]] = downstream_pathway.nodes[edge[2]]
+                if edge[0] not in selected_downstream_pathway.interactions:
+                    selected_downstream_pathway.interactions[edge[0]] = {}
+                selected_downstream_pathway.interactions[edge[0]][edge[2]] = edge[1]
+        if len(ranked_downstream_features) == 0:
+            break
+    return(selected_upstream_pathway, selected_downstream_pathway)
+
+def getBatchCount(cohort_size, batch_size = 15):
+    """
+    Batching function for public Paradigm executable [Paradigm-Shift specific]
+    """
+    return(int((cohort_size + batch_size - 1)/batch_size))
+
+def getChunks(sample_list, batch_size = 15):
+    """
+    Chunking function for public Paradigm executable [Paradigm-Shift specific]
+    """
+    for index in xrange(0, len(sample_list), batch_size):
+        yield sample_list[index:index + batch_size]
+
+def generateData(focus_gene, upstream_features, downstream_features, allow_features, include_samples, data_files, nulls = 0, random_seed = 1):
+    """
+    Generates data files for Paradigm-Shift runs [Paradigm-Shift specific]
+    """
+    random.seed(random_seed)
+    for file in data_files:
+        data_frame = pandas.read_csv(file, sep = '\t', index_col = 0)
+        output_features = list(set(data_frame.columns) & (set(upstream_features) | set(downstream_features)))
+        output_samples = include_samples
+        data_frame[output_features].loc[output_samples].transpose().to_csv('data/transposed_%s' % (file.split('/')[-1]), sep = '\t', na_rep = 'NA')
+        output_features = list(set(data_frame.columns) & set(upstream_features))
+        output_samples = include_samples
+        data_frame[output_features].loc[output_samples].to_csv('data/up_%s' % (file.split('/')[-1]), sep = '\t', na_rep = 'NA')
+        output_features = list((set(data_frame.columns) & set(downstream_features)) - set([focus_gene]))
+        output_samples = include_samples
+        data_frame[output_features].loc[output_samples].to_csv('data/down_%s' % (file.split('/')[-1]), sep = '\t', na_rep = 'NA')
+    for null in range(1, nulls + 1):
+        feature_pool = list((set(upstream_features) | set(downstream_features)) - set([focus_gene]))
+        permute_pool = list(set(allow_features) - set(feature_pool) - set([focus_gene]))
+        permute_map = {focus_gene : focus_gene}
+        for permute in zip(feature_pool, random.sample(permute_pool, len(feature_pool))):
+            permute_map[permute[0]] = permute[1]
+        for file in data_files:
+            data_frame = pandas.read_csv(file, sep = '\t', index_col = 0)
+            output_features = list(set(data_frame.columns) & set(upstream_features))
+            output_samples = include_samples
+            permute_features = [permute_map[feature] for feature in output_features]
+            permute_data_frame = data_frame[permute_features].loc[output_samples].copy()
+            permute_data_frame.columns = output_features
+            permute_data_frame .to_csv('data/up_N%s_%s' % (null, file.split('/')[-1]), sep = '\t', na_rep = 'NA')
+            output_features = list((set(data_frame.columns) & set(downstream_features)) - set([focus_gene]))
+            output_samples = include_samples
+            permute_features = [permute_map[feature] for feature in output_features]
+            permute_data_frame = data_frame[permute_features].loc[output_samples].copy()
+            permute_data_frame.columns = output_features
+            permute_data_frame .to_csv('data/down_N%s_%s' % (null, file.split('/')[-1]), sep = '\t', na_rep = 'NA')
+
+def generateBatchedData(focus_gene, upstream_features, downstream_features, allow_features, include_samples, data_files, nulls = 0, batch_size = 50, random_seed = 1):
+    """
+    Generates data files for Paradigm-Shift runs [Paradigm-Shift specific]
+    Dependencies: getBatchCount, getChunks
+    """
+    random.seed(random_seed)
+    for file in data_files:
+        data_frame = pandas.read_csv(file, sep = '\t', index_col = 0)
+        output_features = list(set(data_frame.columns) & (set(upstream_features) | set(downstream_features)))
+        output_samples = include_samples
+        data_frame[output_features].loc[output_samples].transpose().to_csv('data/transposed_%s' % (file.split('/')[-1]), sep = '\t', na_rep = 'NA')
+        batches = getBatchCount(len(include_samples), batch_size = batch_size)
+        chunker = getChunks(include_samples, batch_size = batch_size)
+        for b in range(batches):
+            current_chunk = chunker.next()
+            output_features = list(set(data_frame.columns) & set(upstream_features))
+            output_samples = current_chunk
+            data_frame[output_features].loc[output_samples].to_csv('data/up_b%s_%s_%s' % (b, batches, file.split('/')[-1]), sep = '\t', na_rep = 'NA')
+            output_features = list((set(data_frame.columns) & set(downstream_features)) - set([focus_gene]))
+            output_samples = current_chunk
+            data_frame[output_features].loc[output_samples].to_csv('data/down_b%s_%s_%s' % (b, batches, file.split('/')[-1]), sep = '\t', na_rep = 'NA')
+    for null in range(1, nulls + 1):
+        feature_pool = list((set(upstream_features) | set(downstream_features)) - set([focus_gene]))
+        permute_pool = list(set(allow_features) - set(feature_pool) - set([focus_gene]))
+        permute_map = {focus_gene : focus_gene}
+        for permute in zip(feature_pool, random.sample(permute_pool, len(feature_pool))):
+            permute_map[permute[0]] = permute[1]
+        for file in data_files:
+            data_frame = pandas.read_csv(file, sep = '\t', index_col = 0)
+            batches = getBatchCount(len(include_samples), batch_size = batch_size)
+            chunker = getChunks(include_samples, batch_size = batch_size)
+            for b in range(batches):
+                current_chunk = chunker.next()
+                output_features = list(set(data_frame.columns) & set(upstream_features))
+                output_samples = current_chunk
+                permute_features = [permute_map[feature] for feature in output_features]
+                permute_data_frame = data_frame[permute_features].loc[output_samples].copy()
+                permute_data_frame.columns = output_features
+                permute_data_frame .to_csv('data/up_N%s_b%s_%s_%s' % (null, b, batches, file.split('/')[-1]), sep = '\t', na_rep = 'NA')
+                output_features = list((set(data_frame.columns) & set(downstream_features)) - set([focus_gene]))
+                output_samples = current_chunk
+                permute_features = [permute_map[feature] for feature in output_features]
+                permute_data_frame = data_frame[permute_features].loc[output_samples].copy()
+                permute_data_frame.columns = output_features
+                permute_data_frame .to_csv('data/down_N%s_b%s_%s_%s' % (null, b, batches, file.split('/')[-1]), sep = '\t', na_rep = 'NA')
+
+def readParadigm(input_file, include_features = None):
+    """
+    Read in a Paradigm format output file [2014-3-10]
+    """
+    likelihood_map = {}
+    ipl_map = {}
+    f = open(input_file, 'r')
+    for line in f:
+        if line.isspace():
+            continue
+        if line.startswith(">"):
+            pline = re.split("[= ]", line.rstrip())
+            sample = pline[1]
+            likelihood_map[sample] = float(pline[3])
+            ipl_map[sample] = {}
+        else:
+            pline = line.rstrip().split('\t')
+            feature = pline[0]
+            if include_features != None:
+                if feature not in include_features:
+                    continue
+            ipl_map[sample][feature] = float(pline[1])
+    f.close()
+    ipl_data = pandas.DataFrame(ipl_map)
+    return(likelihood_map, ipl_data)
+
+def convertListToFloat(input_list):
+    """
+    Converts a list of strings to floats and removes non-float values [2014-3-1]
+    """
+    float_list = []
+    for element in input_list:
+        try:
+            float_val = float(element)
+            if float_val != float_val:
+                raise ValueError
+            float_list.append(float_val)
+        except ValueError:
+            continue
+    return(float_list)
+
+def computeMean(input_list, null = 'NA', return_sd = False, sample_sd = True):
+    """
+    Computes mean and optionally the sd [2014-3-1]
+    Dependencies: convertListToFloat
+    """
+    float_list = convertListToFloat(input_list)
+    if len(float_list) == 0:
+        mean = null
+        sd = null
+    else:
+        mean = sum(float_list)/float(len(float_list))
+        sd = 0.0
+        for element in float_list:
+            sd += (element - mean)**2
+        if len(float_list) > 1:
+            if sample_sd:
+                sd = math.sqrt(sd/(len(float_list) - 1))
+            else:
+                sd = math.sqrt(sd/len(float_list))
+        else:
+            sd = 0.0
+    if return_sd:
+        return(mean, sd)
+    else:
+        return(mean)
+
+def normalizeDataFrame(data_frame, include_samples = None):
+    """
+    Normalizes a pandas dataframe per feature based on the stats of a set of samples [2014-3-11]
+    Dependencies: convertListToFloat, computeMean
+    """
+    normalize_data_frame = data_frame.copy()
+    if include_samples:
+        normalize_samples = include_samples
+    else:
+        normalize_samples = data_frame.columns
+    for feature in normalize_data_frame.index:
+        (mean, sd) = computeMean(list(data_frame[normalize_samples].loc[feature]), return_sd = True)
+        for sample in normalize_data_frame.columns:
+            normalize_data_frame[sample][feature] = (data_frame[sample][feature] - mean)/sd
+    return(normalize_data_frame)
+
+def getConfusion(index, ranked_features, classification_map):
+    """
+    Computes the confusion matrix given a split on a ranked list [2014-3-11]
+    """
+    (tp, fn, fp, tn) = (0, 0, 0, 0)
+    for feature in ranked_features[:index]:
+        if classification_map[feature] == 1:
+            tp += 1
+        elif classification_map[feature] == 0:
+            fp += 1
+    for feature in ranked_features[index:]:
+        if classification_map[feature] == 1:
+            fn += 1
+        elif classification_map[feature] == 0:
+            tn += 1
+    return(tp, fn, fp, tn)
+
+def computeAUC(ranked_features, score_map, classification_map):
+    """
+    Computes the AUC and points for an plotting [2014-3-11]
+    Dependencies: getConfusion
+    """
+    auc = 0.0
+    points = []
+    x = 0.0
+    index = 0
+    while (index <= len(ranked_features)):
+        (tp, fn, fp, tn) = getConfusion(index, ranked_features, classification_map)
+        try:
+            tpr = tp/float(tp+fn)
+            fpr = fp/float(fp+tn)
+        except ZeroDivisionError:
+            return('NA', [])
+        points.append( (fpr, tpr) )
+        if fpr > x:
+            dx = fpr - x
+            x = fpr
+            auc += dx*tpr
+        index += 1
+        if index < len(ranked_features):
+            while (score_map[ranked_features[index - 1]] == score_map[ranked_features[index]]):
+                index += 1
+                if index == len(ranked_features):
+                    break
+        elif index == len(ranked_features):
+            pass
+        else:
+            break
+    return(auc, points)
+
+def computeWelchsT(values_1, values_2, alpha = 0.0, return_df = False):
+    """
+    Computes the t_statistic for a the Welch's T-test for unpaired distributions of unequal variance [2014-3-11]
+    Dependencies: computeMean
+    """
+    (mean_1, sd_1) = computeMean(values_1, return_sd = True)
+    (mean_2, sd_2) = computeMean(values_2, return_sd = True)
+    try:
+        t_statistic = (mean_1 - mean_2)/(math.sqrt((sd_1**2)/len(values_1) + (sd_2**2)/len(values_2)) + alpha)
+    except ZeroDivisionError:
+        t_statistic = 'NA'
+    except TypeError:
+        t_statistic = 'NA'
+    if return_df:
+        df = (((sd_1**2)/len(values_1) + (sd_2**2)/len(values_2))**2)/((((sd_1**2)/len(values_1))**2)/(len(values_1) - 1) + (((sd_2**2)/len(values_2))**2)/(len(values_2) - 1))
+        return(t_statistic, df)
+    else:
+        return(t_statistic)
+
+def computeSeparation(positive_samples, negative_samples, pshift_map, method = 'tt'):
+    """
+    Computes the separation statistic for a Paradigm-Shift run [Paradigm-Shift specific]
+    Dependencies: computeWelchsT, computeMean
+    """
+    positive_values = []
+    negative_values = []
+    for sample in positive_samples + negative_samples:
+        if pshift_map[sample] == 'NA':
+            continue
+        if sample in positive_samples:
+            positive_values.append(pshift_map[sample])
+        elif sample in negative_samples:
+            negative_values.append(pshift_map[sample])
+    if method == 'tt':
+        separation_statistic = computeWelchsT(positive_values, negative_values)
+    else:
+        separation_statistic = 'NA'
+    return(separation_statistic)
+
+## jt classes
+class jtCmd(Target):
+    def __init__(self, command, directory):
+        Target.__init__(self, time=1000)
+        self.command = command
+        self.directory = directory
+    def run(self):
+        os.chdir(self.directory)
+        os.system(self.command)
+
+class queueAnalyses(Target):
+    def __init__(self, analysis_list, paradigm_setup, global_pathway, parameters, directory, last_report_list = []):
+        Target.__init__(self, time=10000)
+        self.analysis_list = analysis_list
+        self.paradigm_setup = paradigm_setup
+        self.global_pathway = global_pathway
+        self.parameters = parameters
+        self.directory = directory
+        self.last_report_list = last_report_list
+    def run(self):
+        os.chdir(self.directory)
+        
+        ## queue analyses
+        report_list = deepcopy(self.last_report_list)
+        if not os.path.exists('analysis'):
+            os.mkdir('analysis')
+        if len(self.analysis_list) > 0:
+            analysis = self.analysis_list[0]
+            if not os.path.exists('analysis/%s' % (analysis.directory)):
+                os.mkdir('analysis/%s' % (analysis.directory))
+                report_list.append(analysis.directory)
+                self.addChildTarget(branchFolds(analysis,
+                                                self.paradigm_setup,
+                                                self.global_pathway,
+                                                self.parameters,
+                                                self.directory))
+            self.setFollowOnTarget(queueAnalyses(self.analysis_list[1:],
+                                                 self.paradigm_setup,
+                                                 self.global_pathway,
+                                                 self.parameters,
+                                                 self.directory,
+                                                 last_report_list = report_list))
+        else:
+            if self.parameters.report_directory != None:
+                self.setFollowOnTarget(makeReport(report_list,
+                                                  self.parameters.report_directory,
+                                                  self.directory))
+
+class branchAnalyses(Target):
+    def __init__(self, analysis_list, paradigm_setup, global_pathway, parameters, directory):
+        Target.__init__(self, time=10000)
+        self.analysis_list = analysis_list
+        self.paradigm_setup = paradigm_setup
+        self.global_pathway = global_pathway
+        self.parameters = parameters
+        self.directory = directory
+    def run(self):
+        os.chdir(self.directory)
+        
+        ## branch analyses
+        report_list = []
+        if not os.path.exists('analysis'):
+            os.mkdir('analysis')
+        for analysis in self.analysis_list:
+            if not os.path.exists('analysis/%s' % (analysis.directory)):
+                os.mkdir('analysis/%s' % (analysis.directory))
+                report_list.append(analysis.directory)
+                self.addChildTarget(branchFolds(analysis,
+                                                self.paradigm_setup,
+                                                self.global_pathway,
+                                                self.parameters,
+                                                self.directory))
+        if self.parameters.report_directory != None:
+            self.setFollowOnTarget(makeReport(report_list,
+                                              self.parameters.report_directory,
+                                              self.directory))
+
+class branchFolds(Target):
+    def __init__(self, analysis, paradigm_setup, global_pathway, parameters, directory):
+        Target.__init__(self, time=10000)
+        self.analysis = analysis
+        self.paradigm_setup = paradigm_setup
+        self.global_pathway = global_pathway
+        self.parameters = parameters
+        self.directory = directory
+    def run(self):
+        ps_directory = '%s/analysis/%s' % (self.directory, self.analysis.directory)
+        os.chdir(ps_directory)
+        random.seed(self.parameters.random_seed+123454321)
+        
+        ## cross validation
+        if self.parameters.cross_validation:
+            logger('Performing cross-validation ...\n', file = 'progress.log')
+            fold_map = {}
+            for round in range(1, self.parameters.n_rounds + 1):
+                fold_map[round] = {}
+                for fold in range(1, self.parameters.m_folds + 1):
+                    fold_map[round][fold] = []
+                select_positive = deepcopy(self.analysis.positive_samples)
+                select_negative = deepcopy(self.analysis.negative_samples)
+                while len(select_positive) + len(select_negative) > 0:
+                    for fold in range(1, self.parameters.m_folds + 1):
+                        if len(select_positive) > 0:
+                            fold_map[round][fold].append(select_positive.pop(random.randint(0, len(select_positive) - 1)))
+                        elif len(select_negative) > 0:
+                            fold_map[round][fold].append(select_negative.pop(random.randint(0, len(select_negative) - 1)))
+            for round in range(1, self.parameters.n_rounds + 1):
+                for fold in range(1, self.parameters.m_folds + 1):
+                    fold_index = (round - 1)*self.parameters.m_folds + fold
+                    os.mkdir('fold%s' % (fold_index))
+                    self.addChildTarget(branchParameters(fold_index,
+                                                         self.analysis,
+                                                         fold_map[round][fold],
+                                                         self.paradigm_setup,
+                                                         self.global_pathway,
+                                                         self.parameters,
+                                                         self.directory))
+        
+        ## run final
+        self.setFollowOnTarget(branchParameters(0,
+                                                self.analysis,
+                                                self.paradigm_setup.samples,
+                                                self.paradigm_setup,
+                                                self.global_pathway,
+                                                self.parameters,
+                                                self.directory))
+
+class branchParameters(Target):
+    def __init__(self, fold, analysis, training_samples, paradigm_setup, global_pathway, parameters, directory):
+        Target.__init__(self, time=10000)
+        self.fold = fold
+        self.analysis = analysis
+        self.training_samples = training_samples
+        self.paradigm_setup = paradigm_setup
+        self.global_pathway = global_pathway
+        self.parameters = parameters
+        self.directory = directory
+    def run(self):
+        if self.fold == 0:
+            ps_directory = '%s/analysis/%s' % (self.directory, self.analysis.directory)
+            os.chdir(ps_directory)
+            logger('Constructing final model ...\n', file = 'progress.log')
+        else:
+            ps_directory = '%s/analysis/%s/fold%s' % (self.directory, self.analysis.directory, self.fold)
+            os.chdir(ps_directory)
+        
+        ## average cross validation aucs for final run
+        if self.fold == 0:
+            auc_list = []
+            auc_lines = []
+            for round in range(1, self.parameters.n_rounds + 1):
+                for fold in range(1, self.parameters.m_folds + 1):
+                    fold_index = (round - 1)*self.parameters.m_folds + fold
+                    if os.path.exists('fold%s/auc.stat' % (fold_index)):
+                        f = open('fold%s/auc.stat' % (fold_index), 'r')
+                        line = f.readline()
+                        f.close()
+                        (auc_train, auc_test, auc_params) = line.rstrip().split('\t')
+                    else:
+                        (auc_train, auc_test, auc_params) = ('---', '---', '---')
+                    auc_list.append(auc_test)
+                    auc_lines.append('%s\t%s\t%s\t%s' % (fold_index, auc_train, auc_test, auc_params))
+            o = open('average_auc.tab', 'w')
+            o.write('> %s\tMean(AUC) = %s\n' % (self.analysis.analysis_name, computeMean(auc_list)))
+            o.write('# fold\ttrain\ttest\tparameters\n')
+            o.write('%s\n' % ('\n'.join(auc_lines)))
+            o.close()
+        
+        ## branch parameters
+        for distance in self.parameters.max_distance:
+            for threshold in self.parameters.threshold:
+                for cost in self.parameters.cost:
+                    for method in self.parameters.selection_method:
+                        current_parameters = [distance, threshold, cost, method]
+                        os.mkdir('param_%s' % ('_'.join([str(parameter) for parameter in current_parameters])))
+                        self.addChildTarget(selectNeighborhood(self.fold,
+                                                               self.analysis,
+                                                               self.training_samples,
+                                                               self.paradigm_setup,
+                                                               self.global_pathway,
+                                                               current_parameters,
+                                                               self.parameters,
+                                                               self.directory))
+        
+        ## evaluate models
+        self.setFollowOnTarget(compareParameters(self.fold,
+                                                 self.analysis,
+                                                 self.parameters,
+                                                 self.directory))
+
+class selectNeighborhood(Target):
+    def __init__(self, fold, analysis, training_samples, paradigm_setup, global_pathway, current_parameters, parameters, directory):
+        Target.__init__(self, time=10000)
+        self.fold = fold
+        self.analysis = analysis
+        self.training_samples = training_samples
+        self.paradigm_setup = paradigm_setup
+        self.global_pathway = global_pathway
+        self.current_parameters = current_parameters
+        self.parameters = parameters
+        self.directory = directory
+    def run(self):
+        if self.fold == 0:
+            ps_directory = '%s/analysis/%s/param_%s' % (self.directory, self.analysis.directory, '_'.join([str(parameter) for parameter in self.current_parameters]))
+            os.chdir(ps_directory)
+        else:
+            ps_directory = '%s/analysis/%s/fold%s/param_%s' % (self.directory, self.analysis.directory, self.fold, '_'.join([str(parameter) for parameter in self.current_parameters]))
+            os.chdir(ps_directory)
+        logger('Selecting neighborhood ...\n', file = 'progress.log')
+        
+        ## get upstream and downstream base neighborhoods per complex, then combine
+        (group_index, group_pathways) = getFullNeighborhood(self.analysis.focus_gene, self.global_pathway, max_distance = self.current_parameters[0])
+        combined_upstream = Pathway( ({}, {}) )
+        combined_downstream = Pathway( ({}, {}) )
+        for index in group_pathways:
+            combined_upstream.appendPathway(group_pathways[index][0])
+            combined_downstream.appendPathway(group_pathways[index][1])
+        
+        ## identify all interaction paths relevant to the Paradigm-Shift task
+        (upstream_path_map, downstream_path_map) = getRelevantPaths(self.analysis.focus_gene, combined_upstream, combined_downstream, max_distance = self.current_parameters[0])
+        
+        ## score and select features
+        data_map = {}
+        assert(len(self.paradigm_setup.mrna) > 0)
+        data_map['mrna'] = pandas.read_csv(self.paradigm_setup.mrna[0], sep = '\t', index_col = 0)
+        if len(self.paradigm_setup.active) > 0:
+            data_map['active'] = pandas.read_csv(self.paradigm_setup.active[0], sep = '\t', index_col = 0)
+        positive_samples = list(set(self.training_samples) & set(self.analysis.positive_samples))
+        negative_samples = list(set(self.training_samples) & set(self.analysis.negative_samples))
+        (selected_upstream, selected_downstream) = getSelectedNeighborhood(self.analysis.focus_gene,
+                                               data_map,
+                                               positive_samples,
+                                               negative_samples,
+                                               upstream_path_map,
+                                               downstream_path_map,
+                                               combined_upstream,
+                                               combined_downstream,
+                                               threshold = self.current_parameters[1],
+                                               cost = self.current_parameters[2],
+                                               method = self.current_parameters[3])
+        
+        ## generate necessary data for the Paradigm run
+        os.mkdir('data')
+        data_files = self.paradigm_setup.genome + self.paradigm_setup.mrna + self.paradigm_setup.protein + self.paradigm_setup.active
+        upstream_features = list(set(selected_upstream.nodes.keys()) & set(self.paradigm_setup.features))
+        downstream_features = list(set(selected_downstream.nodes.keys()) & set(self.paradigm_setup.features))
+        if self.paradigm_setup.public:
+            generateBatchedData(self.analysis.focus_gene, upstream_features, downstream_features, self.paradigm_setup.features, self.paradigm_setup.samples, data_files, nulls = self.paradigm_setup.nulls, batch_size = self.paradigm_setup.batch_size, random_seed = self.parameters.random_seed + self.fold)
+        else:
+            generateData(self.analysis.focus_gene, upstream_features, downstream_features, self.paradigm_setup.features, self.paradigm_setup.samples, data_files, nulls = self.paradigm_setup.nulls, random_seed = self.parameters.random_seed + self.fold)
+        
+        ## output pathway
+        selected_upstream.writeSPF('upstream_pathway.tab')
+        selected_downstream.writeSPF('downstream_pathway.tab')
+        
+        if False:
+            o = open('auc.stat', 'w')
+            o.write('---\t---\n')
+            o.close()
+        else:
+            self.addChildTarget(runParadigm(self.analysis, self.paradigm_setup, ps_directory))
+            self.setFollowOnTarget(computeShifts(self.fold,
+                                                 self.analysis,
+                                                 self.training_samples,
+                                                 self.paradigm_setup,
+                                                 self.current_parameters,
+                                                 self.parameters,
+                                                 self.directory))
+
+class runParadigm(Target):
+    def __init__(self, analysis, paradigm_setup, directory):
+        Target.__init__(self, time=10000)
+        self.analysis = analysis
+        self.paradigm_setup = paradigm_setup
+        self.directory = directory
+    def run(self):
+        os.chdir(self.directory)
+        os.mkdir('paradigm')
+        logger('Running Paradigm inference ...\n', file = 'progress.log')
+        
+        
+        ## copy paradigm files
+        os.system('cp %s .' % (self.paradigm_setup.config))
+        os.system('cp %s .' % (self.paradigm_setup.params))
+        if self.paradigm_setup.dogma:
+            os.system('cp %s .' % (self.paradigm_setup.dogma))
+        if self.paradigm_setup.imap:
+            os.system('cp %s .' % (self.paradigm_setup.imap))
+        ## run Paradigm (observed and nulls)
+        batches = getBatchCount(len(self.paradigm_setup.samples), batch_size = self.paradigm_setup.batch_size)
+        if batches == 0:
+            self.addChildTarget(jtCmd('%s -p upstream_pathway.tab -c config.txt -b %s -o %s' % (paradigm_executable, 'data/up_', 'paradigm/%s_upstream.fa' % (self.analysis.focus_gene)), self.directory))
+            self.addChildTarget(jtCmd('%s -p downstream_pathway.tab -c config.txt -b %s -o %s' % (paradigm_executable, 'data/down_', 'paradigm/%s_downstream.fa' % (self.analysis.focus_gene)), self.directory))
+            for null in range(1, self.paradigm_setup.nulls + 1):
+                self.addChildTarget(jtCmd('%s -p upstream_pathway.tab -c config.txt -b %s -o %s' % (paradigm_executable, 'data/up_N%s_' % (null), 'paradigm/N%s_%s_upstream.fa' % (null, self.analysis.focus_gene)), self.directory))
+                self.addChildTarget(jtCmd('%s -p downstream_pathway.tab -c config.txt -b %s -o %s' % (paradigm_executable, 'data/down_N%s_' % (null), 'paradigm/N%s_%s_downstream.fa' % (null, self.analysis.focus_gene)), self.directory))
+        elif self.paradigm_setup.public:
+            os.mkdir('outputFiles')
+            for b in range(batches):
+                self.addChildTarget(jtCmd('%s -p upstream_pathway.tab -c config.txt -b %s -o %s' % (paradigm_executable, 'data/up_b%s_%s_' % (b, batches), 'outputFiles/%s_upstream_b%s_%s.fa' % (self.analysis.focus_gene, b, batches)), self.directory))
+                self.addChildTarget(jtCmd('%s -p downstream_pathway.tab -c config.txt -b %s -o %s' % (paradigm_executable, 'data/down_b%s_%s_' % (b, batches), 'outputFiles/%s_downstream_b%s_%s.fa' % (self.analysis.focus_gene, b, batches)), self.directory))
+                for null in range(1, self.paradigm_setup.nulls + 1):
+                    self.addChildTarget(jtCmd('%s -p upstream_pathway.tab -c config.txt -b %s -o %s' % (paradigm_executable, 'data/up_N%s_b%s_%s_' % (null, b, batches), 'outputFiles/N%s_%s_upstream_b%s_%s.fa' % (null, self.analysis.focus_gene, b, batches)), self.directory))
+                    self.addChildTarget(jtCmd('%s -p downstream_pathway.tab -c config.txt -b %s -o %s' % (paradigm_executable, 'data/down_N%s_b%s_%s_' % (null, b, batches), 'outputFiles/N%s_%s_downstream_b%s_%s.fa' % (null, self.analysis.focus_gene, b, batches)), self.directory))
+        else:
+            os.mkdir('outputFiles')
+            for b in range(batches):
+                self.addChildTarget(jtCmd('%s -p upstream_pathway.tab -c config.txt -b %s -o %s -s %s,%s' % (paradigm_executable, 'data/up_', 'outputFiles/%s_upstream_b%s_%s.fa' % (self.analysis.focus_gene, b, batches), b, batches), self.directory))
+                self.addChildTarget(jtCmd('%s -p downstream_pathway.tab -c config.txt -b %s -o %s -s %s,%s' % (paradigm_executable, 'data/down_', 'outputFiles/%s_downstream_b%s_%s.fa' % (self.analysis.focus_gene, b, batches), b, batches), self.directory))
+                for null in range(1, self.paradigm_setup.nulls + 1):
+                    self.addChildTarget(jtCmd('%s -p upstream_pathway.tab -c config.txt -b %s -o %s -s %s,%s' % (paradigm_executable, 'data/up_N%s_' % (null), 'outputFiles/N%s_%s_upstream_b%s_%s.fa' % (null, self.analysis.focus_gene, b, batches), b, batches), self.directory))
+                    self.addChildTarget(jtCmd('%s -p downstream_pathway.tab -c config.txt -b %s -o %s -s %s,%s' % (paradigm_executable, 'data/down_N%s_' % (null), 'outputFiles/N%s_%s_downstream_b%s_%s.fa' % (null, self.analysis.focus_gene, b, batches), b, batches), self.directory))
+        self.setFollowOnTarget(collectParadigm(self.analysis, self.paradigm_setup, self.directory))
+
+class collectParadigm(Target):
+    def __init__(self, analysis, paradigm_setup, directory):
+        Target.__init__(self, time=10000)
+        self.analysis = analysis
+        self.paradigm_setup = paradigm_setup
+        self.directory = directory
+    def run(self):
+        os.chdir(self.directory)
+        
+        batches = getBatchCount(len(self.paradigm_setup.samples), batch_size = self.paradigm_setup.batch_size)
+        for b in range(batches):
+            os.system('cat outputFiles/%s_upstream_b%s_%s.fa >> paradigm/%s_upstream.fa' % (self.analysis.focus_gene, b, batches, self.analysis.focus_gene))
+            os.system('cat outputFiles/%s_downstream_b%s_%s.fa >> paradigm/%s_downstream.fa' % (self.analysis.focus_gene, b, batches, self.analysis.focus_gene))
+            for null in range(1, self.paradigm_setup.nulls + 1):
+                os.system('cat outputFiles/N%s_%s_upstream_b%s_%s.fa >> paradigm/N%s_%s_upstream.fa' % (null, self.analysis.focus_gene, b, batches, null, self.analysis.focus_gene))
+                os.system('cat outputFiles/N%s_%s_downstream_b%s_%s.fa >> paradigm/N%s_%s_downstream.fa' % (null, self.analysis.focus_gene, b, batches, null, self.analysis.focus_gene))
+        if os.path.exists('outputFiles'):
+            os.system('rm -rf outputFiles')
+
+class computeShifts(Target):
+    def __init__(self, fold, analysis, training_samples, paradigm_setup, current_parameters, parameters, directory, alpha = 0.05):
+        Target.__init__(self, time=10000)
+        self.fold = fold
+        self.analysis = analysis
+        self.training_samples = training_samples
+        self.paradigm_setup = paradigm_setup
+        self.current_parameters = current_parameters
+        self.parameters = parameters
+        self.directory = directory
+        self.alpha = alpha
+    def run(self):
+        if self.fold == 0:
+            ps_directory = '%s/analysis/%s/param_%s' % (self.directory, self.analysis.directory, '_'.join([str(parameter) for parameter in self.current_parameters]))
+            os.chdir(ps_directory)
+        else:
+            ps_directory = "%s/analysis/%s/fold%s/param_%s" % (self.directory, self.analysis.directory, self.fold, '_'.join([str(parameter) for parameter in self.current_parameters]))
+            os.chdir(ps_directory)
+        logger('Computing P-Shifts ...\n', file = 'progress.log')
+        
+        ## define sample groups
+        training_all = self.training_samples
+        training_positive = list(set(self.analysis.positive_samples) & set(training_all))
+        training_negative = list(set(self.analysis.negative_samples) & set(training_all))
+        testing_all = list((set(self.paradigm_setup.samples) - set(self.training_samples)) & (set(self.analysis.positive_samples) | set(self.analysis.negative_samples)))
+        testing_positive = list(set(self.analysis.positive_samples) & set(testing_all))
+        testing_negative = list(set(self.analysis.negative_samples) & set(testing_all))
+        
+        ## read in Paradigm inferences
+        assert(os.path.exists('paradigm/%s_upstream.fa' % (self.analysis.focus_gene)))
+        assert(os.path.exists('paradigm/%s_downstream.fa' % (self.analysis.focus_gene)))
+        upstream_ipls = readParadigm('paradigm/%s_upstream.fa' % (self.analysis.focus_gene))[1]
+        downstream_ipls = readParadigm('paradigm/%s_downstream.fa' % (self.analysis.focus_gene))[1]
+        upstream_ipls.to_csv('upstream_paradigm.tab', sep = '\t')
+        downstream_ipls.to_csv('downstream_paradigm.tab', sep = '\t')
+        normalized_upstream_ipls = normalizeDataFrame(upstream_ipls.loc[[self.analysis.focus_gene]], include_samples = training_negative)
+        normalized_downstream_ipls = normalizeDataFrame(downstream_ipls.loc[[self.analysis.focus_gene]], include_samples = training_negative)
+        null_upstream_ipls = {}
+        null_downstream_ipls = {}
+        normalized_null_upstream_ipls = {}
+        normalized_null_downstream_ipls = {}
+        for null in range(1, self.paradigm_setup.nulls + 1):
+            assert(os.path.exists('paradigm/N%s_%s_upstream.fa' % (null, self.analysis.focus_gene)))
+            assert(os.path.exists('paradigm/N%s_%s_downstream.fa' % (null, self.analysis.focus_gene)))
+            null_upstream_ipls[null] = readParadigm('paradigm/N%s_%s_upstream.fa' % (null, self.analysis.focus_gene))[1]
+            null_downstream_ipls[null] = readParadigm('paradigm/N%s_%s_downstream.fa' % (null, self.analysis.focus_gene))[1]
+            normalized_null_upstream_ipls[null] = normalizeDataFrame(null_upstream_ipls[null].loc[[self.analysis.focus_gene]], include_samples = training_negative)
+            normalized_null_downstream_ipls[null] = normalizeDataFrame(null_downstream_ipls[null].loc[[self.analysis.focus_gene]], include_samples = training_negative)
+            
+        ## compute raw and normalized p-shifts
+        raw_shifts = {}
+        normalized_shifts = {}
+        for sample in self.paradigm_setup.samples:
+            assert((sample in downstream_ipls.columns) and (sample in upstream_ipls.columns))
+            raw_shifts[sample] = (downstream_ipls[sample][self.analysis.focus_gene] - upstream_ipls[sample][self.analysis.focus_gene])
+            normalized_shifts[sample] = (normalized_downstream_ipls[sample][self.analysis.focus_gene] - normalized_upstream_ipls[sample][self.analysis.focus_gene])
+            for null in range(1, self.paradigm_setup.nulls + 1):
+                raw_shifts['null%s_%s' % (null, sample)] = (null_downstream_ipls[null][sample][self.analysis.focus_gene] - null_upstream_ipls[null][sample][self.analysis.focus_gene])
+                normalized_shifts['null%s_%s' % (null, sample)] = (normalized_null_downstream_ipls[null][sample][self.analysis.focus_gene] - normalized_null_upstream_ipls[null][sample][self.analysis.focus_gene])
+        o = open('pshift.tab', 'w')
+        o.write("> %s\tP-Shifts:Table\n" % (self.analysis.focus_gene))
+        o.write("# sample\tclass\tP-Shift\n")
+        for sample in self.paradigm_setup.samples:
+            if sample in training_positive + testing_positive:
+                o.write("%s\t+\t%s\n" % (sample, raw_shifts[sample]))
+            else:
+                o.write("%s\t-\t%s\n" % (sample, raw_shifts[sample]))
+        o.close()
+        o = open('normalized_pshift.tab', 'w')
+        o.write("> %s\tNormalized_P-Shifts:Table\n" % (self.analysis.focus_gene))
+        o.write("# sample\tclass\tP-Shift\n")
+        for sample in self.paradigm_setup.samples:
+            if sample in training_positive + testing_positive:
+                o.write("%s\t+\t%s\n" % (sample, normalized_shifts[sample]))
+            else:
+                o.write("%s\t-\t%s\n" % (sample, normalized_shifts[sample]))
+        o.close()
+        raw_centered_shifts = {}
+        normalized_centered_shifts = {}
+        (raw_negative_mean, raw_negative_sd) = computeMean([raw_shifts[sample] for sample in training_negative], return_sd = True)
+        (raw_positive_mean, raw_positive_sd) = computeMean([raw_shifts[sample] for sample in training_positive], return_sd = True)
+        (normalized_negative_mean, normalized_negative_sd) = computeMean([normalized_shifts[sample] for sample in training_negative], return_sd = True)
+        (normalized_positive_mean, normalized_positive_sd) = computeMean([normalized_shifts[sample] for sample in training_positive], return_sd = True)
+        for sample in self.paradigm_setup.samples:
+            raw_centered_shifts[sample] = (raw_shifts[sample] - raw_negative_mean)/raw_negative_sd
+            normalized_centered_shifts[sample] = (normalized_shifts[sample] - normalized_negative_mean)/normalized_negative_sd
+        o = open('pshift.centered.tab', 'w')
+        o.write("> %s\tP-Shifts:Table\n" % (self.analysis.focus_gene))
+        o.write("# sample\tclass\tP-Shift\n")
+        for sample in self.paradigm_setup.samples:
+            if sample in training_positive + testing_positive:
+                o.write("%s\t+\t%s\n" % (sample, raw_centered_shifts[sample]))
+            else:
+                o.write("%s\t-\t%s\n" % (sample, raw_centered_shifts[sample]))
+        o.close()
+        o = open('normalized_pshift.centered.tab', 'w')
+        o.write("> %s\tNormalized_P-Shifts:Table\n" % (self.analysis.focus_gene))
+        o.write("# sample\tclass\tP-Shift\n")
+        for sample in self.paradigm_setup.samples:
+            if sample in training_positive + testing_positive:
+                o.write("%s\t+\t%s\n" % (sample, normalized_centered_shifts[sample]))
+            else:
+                o.write("%s\t-\t%s\n" % (sample, normalized_centered_shifts[sample]))
+        o.close()
+        
+        ## compute auc from stats
+        absolute_shifts = {}
+        classification_map = {}
+        for sample in self.paradigm_setup.samples:
+            absolute_shifts[sample] = abs(raw_centered_shifts[sample])
+            if sample in training_positive + testing_positive:
+                classification_map[sample] = 1
+            else:
+                classification_map[sample] = 0
+        training_samples_sorted = deepcopy(training_all)
+        if self.parameters.cross_validation_two_sided:
+            training_samples_sorted.sort(lambda x, y: cmp(absolute_shifts[y], absolute_shifts[x]))
+            training_auc = computeAUC(training_samples_sorted, absolute_shifts, classification_map)[0]
+        else:
+            if raw_positive_mean >= raw_negative_mean:
+                training_samples_sorted.sort(lambda x, y: cmp(raw_shifts[y], raw_shifts[x]))
+            elif raw_positive_mean < raw_negative_mean:
+                training_samples_sorted.sort(lambda x, y: cmp(raw_shifts[x], raw_shifts[y]))
+            training_auc = computeAUC(training_samples_sorted, raw_shifts, classification_map)[0]
+        if self.fold != 0:
+            testing_samples_sorted = deepcopy(testing_all)
+            if self.parameters.cross_validation_two_sided:
+                testing_samples_sorted.sort(lambda x, y: cmp(absolute_shifts[y], absolute_shifts[x]))
+                testing_auc = computeAUC(testing_samples_sorted, absolute_shifts, classification_map)[0]
+            else:
+                if raw_positive_mean >= raw_negative_mean:
+                    testing_samples_sorted.sort(lambda x, y: cmp(raw_shifts[y], raw_shifts[x]))
+                elif raw_positive_mean < raw_negative_mean:
+                    testing_samples_sorted.sort(lambda x, y: cmp(raw_shifts[x], raw_shifts[y])) 
+                testing_auc = computeAUC(testing_samples_sorted, raw_shifts, classification_map)[0]
+        else:
+            testing_auc = '---'
+        o = open('auc.tab', 'w')
+        o.write('%s\t%s\n' % (training_auc, testing_auc))
+        o.close()
+        
+        ## compute m-separation and significance
+        if self.fold == 0:
+            o = open('positive.scores', 'w')
+            o.write('%s\n' % ('\n'.join([str(raw_shifts[sample]) for sample in training_positive])))
+            o.close()
+            o = open('negative.scores', 'w')
+            o.write('%s\n' % ('\n'.join([str(raw_shifts[sample]) for sample in training_negative])))
+            o.close()
+            mseparation_map = {}
+            mseparation_map['real'] = computeSeparation(training_positive,
+                                                        training_negative,
+                                                        raw_shifts,
+                                                        method = self.parameters.separation_method)
+            for null in range(1, self.paradigm_setup.nulls + 1):
+                mseparation_map['null%s' % (null)] = computeSeparation(['null%s_%s' % (null, sample) for sample in training_positive],
+                                                                       ['null%s_%s' % (null, sample) for sample in training_negative],
+                                                                       raw_shifts,
+                                                                       method = self.parameters.separation_method)
+            o = open('real.scores', 'w')
+            o.write('%s\n' % (mseparation_map['real']))
+            o.close()
+            o = open('null.scores', 'w')
+            o.write('%s\n' % ('\n'.join([str(mseparation_map['null%s' % (null)]) for null in range(1, self.paradigm_setup.nulls + 1)])))
+            o.close()
+            real_scores = [mseparation_map['real']]
+            null_scores = [mseparation_map['null%s' % (null)] for null in range(1, self.paradigm_setup.nulls + 1)]
+            (null_mean, null_sd) = computeMean(null_scores, return_sd = True)
+            significance_score = (real_scores[0] - null_mean)/(null_sd + self.alpha)
+            o = open('significance.tab', 'w')
+            o.write('# Focus_Gene\tNegative_Samples\tPositive_Samples\tM-Separation\tZ-Score\n')
+            o.write('%s\t%s\t%s\t%s\t%s\n' % (self.analysis.focus_gene, len(training_negative), len(training_positive), real_scores[0], significance_score))
+            o.close()
+        else:
+            o = open('significance.tab', 'w')
+            o.write('# Focus_Gene\tNegative_Samples\tPositive_Samples\tM-Separation\tZ-Score\n')
+            o.write('%s\t%s\t%s\t%s\t%s\n' % (self.analysis.focus_gene, len(training_negative), len(training_positive), '---', '---'))
+            o.close()
+
+        ## output files for circleplots
+        if self.fold == 0:
+            o = open('up.features', 'w')
+            for feature in set(upstream_ipls.index) - set([self.analysis.focus_gene]):
+                o.write('%s\n' % (feature))
+            o.close()
+            o = open('alteration.features', 'w')
+            o.write('%s\n' % (self.analysis.focus_gene))
+            o.close()
+            o = open('down.features', 'w')
+            for feature in set(downstream_ipls.index) - set([self.analysis.focus_gene]):
+                o.write('%s\n' % (feature))
+            o.close()
+            o = open('include.samples', 'w')
+            for sample in self.paradigm_setup.samples:
+                o.write('%s\n' % (sample))
+            o.close()
+            o = open('alteration.circle', 'w')
+            o.write('id')
+            for sample in self.paradigm_setup.samples:
+                o.write('\t%s' % (sample))
+            o.write('\n*')
+            for sample in self.paradigm_setup.samples:
+                if sample in self.analysis.positive_samples:
+                    o.write('\t1')
+                elif sample in self.analysis.negative_samples:
+                    o.write('\t0')
+                else:
+                    o.write('\t0.5')
+            o.write('\n')
+            o.close()
+            os.system('median-center.py data/transposed_%s expression.circle' % (self.paradigm_setup.mrna[0].split('/')[-1]))
+            o = open('shift.circle', 'w')
+            o.write('id')
+            for sample in self.paradigm_setup.samples:
+                o.write('\t%s' % (sample))
+            o.write('\n*')
+            for sample in self.paradigm_setup.samples:
+                o.write('\t%s' % (raw_shifts[sample]))
+            o.write('\n')
+            o.close()
+            o = open('color.map', 'w')
+            o.write("> 1\n0\t255.255.255\n1\t0.0.0\n0.5\t150.150.150\n")
+            o.close()
+
+class compareParameters(Target):
+    def __init__(self, fold, analysis, parameters, directory):
+        Target.__init__(self, time=10000)
+        self.fold = fold
+        self.analysis = analysis
+        self.parameters = parameters
+        self.directory = directory
+    def run(self):
+        if self.fold == 0:
+            ps_directory = '%s/analysis/%s' % (self.directory, self.analysis.directory)
+            os.chdir(ps_directory)
+            logger('Identifying the best parameters by training validation ...\n', file = 'progress.log')
+        else:
+            ps_directory = '%s/analysis/%s/fold%s' % (self.directory, self.analysis.directory, self.fold)
+            os.chdir(ps_directory)
+        
+        ## report AUCs for model with best training validation
+        best_training_auc = 0.0
+        best_testing_auc = 0.0
+        best_parameters = None
+        for distance in self.parameters.max_distance:
+            for threshold in self.parameters.threshold:
+                for cost in self.parameters.cost:
+                    for method in self.parameters.selection_method:
+                        current_parameters = [distance, threshold, cost, method]
+                        f = open('param_%s/auc.tab' % ('_'.join([str(parameter) for parameter in current_parameters])), 'r')
+                        (current_training_auc, current_testing_auc) = f.readline().rstrip().split('\t')
+                        f.close()
+                        try:
+                            current_training_auc = float(current_training_auc)
+                        except ValueError:
+                            continue
+                        try:
+                            current_testing_auc = float(current_testing_auc)
+                        except ValueError:
+                            pass
+                        if current_training_auc > best_training_auc:
+                            best_training_auc = current_training_auc
+                            best_testing_auc = current_testing_auc
+                            best_parameters = [str(distance), str(threshold), str(cost), str(method)]
+        if self.fold != 0:
+            o = open('auc.tab', 'w')
+            if best_training_auc == 0.0:
+                o.write('---\t---\t---\n')
+            else:
+                o.write('%s\t%s\t%s\n' % (best_training_auc, best_testing_auc, ','.join(best_parameters)))
+            o.close()
+        else:
+            if best_parameters is not None:
+                self.setFollowOnTarget(generateOutput(self.analysis, best_parameters, self.parameters, self.directory))
+
+class generateOutput(Target):
+    def __init__(self, analysis, best_parameters, parameters, directory):
+        Target.__init__(self, time=10000)
+        self.analysis = analysis
+        self.best_parameters = best_parameters
+        self.parameters = parameters
+        self.directory = directory
+    def run(self):
+        ps_directory = '%s/analysis/%s' % (self.directory, self.analysis.directory)
+        os.chdir(ps_directory)
+        logger('Generating output files ...\n', file = 'progress.log')
+        
+        ## copy tables
+        os.system('cp param_%s/significance.tab significance.tab' % ('_'.join(self.best_parameters)))
+        os.system('cp param_%s/pshift.tab pshift.tab' % ('_'.join(self.best_parameters)))
+        os.system('cp param_%s/normalized_pshift.tab normalized_pshift.tab' % ('_'.join(self.best_parameters)))
+
+        ## output m-separation and significance plots
+        os.system("mseparation.R %s param_%s/positive.scores param_%s/negative.scores" % (self.analysis.focus_gene,
+                                                                                          '_'.join(self.best_parameters),
+                                                                                          '_'.join(self.best_parameters)))
+        os.system("significance.R %s param_%s/real.scores param_%s/null.scores" % (self.analysis.focus_gene,
+                                                                                          '_'.join(self.best_parameters),
+                                                                                          '_'.join(self.best_parameters)))
+        
+        ## output circleplots
+        os.mkdir('img')
+        os.chdir('param_%s' % ('_'.join(self.best_parameters)))
+        os.system('%s -r color.map -o \"%s;alteration.circle,shift.circle\" -s include.samples -f alteration.features ../img/ alteration.circle expression.circle shift.circle' % (circleplot_executable, self.analysis.focus_gene))
+        os.system('%s -r color.map -o \"%s;alteration.circle,shift.circle\" -s include.samples -f up.features ../img/ alteration.circle expression.circle' % (circleplot_executable, self.analysis.focus_gene))
+        os.system('%s -r color.map -o \"%s;alteration.circle,shift.circle\" -s include.samples -f down.features ../img/ alteration.circle expression.circle' % (circleplot_executable, self.analysis.focus_gene))
+        os.chdir('..')
+        
+        ## output sif
+        combined_pathway = Pathway( ({}, {}) )
+        combined_pathway.appendPathway(Pathway('param_%s/upstream_pathway.tab' % ('_'.join(self.best_parameters))))
+        combined_pathway.appendPathway(Pathway('param_%s/downstream_pathway.tab' % ('_'.join(self.best_parameters))))
+        combined_pathway.writeSIF('pshift_%s.sif' % (self.analysis.focus_gene))
+
+class makeReport(Target):
+    def __init__(self, report_list, report_directory, directory):
+        Target.__init__(self, time=10000)
+        self.report_list = report_list
+        self.report_directory = report_directory
+        self.directory = directory
+    def run(self):
+        os.chdir(self.directory)
+        
+        if not os.path.exists(self.report_directory):
+            os.mkdir('%s' % (self.report_directory))
+        
+        ## cytoscape-web
+        # for gene in self.includeFeatures:
+        #     if os.path.exists('analysis/%s/sig.tab' % (gene)):
+        #         tableFiles = []
+        #         tableFiles.append('analysis/%s/sig.tab' % (gene))
+        #         tableFiles.append('msepPlot:analysis/%s/%s.msep.pdf' % (gene, gene))
+        #         tableFiles.append('backgroundPlot:analysis/%s/%s.background.pdf' %
+        #                                                                      (gene, gene))
+        #         tableFiles.append('analysis/%s/avgAUC.tab' % (gene))
+        #         tableFiles.append('analysis/%s/pshift.tab' % (gene))
+        #         system('pathmark-report.py -t %s analysis/%s %s' %
+        #                                      (','.join(tableFiles), gene, self.reportDir))
+        #         system('cp analysis/%s/pshift* %s' % (gene, self.reportDir))
+
+def main():
+    ## check for fresh run
+    if os.path.exists('.jobTree'):
+        logger('WARNING: .jobTree directory found, remove it first to start a fresh run\n')
+    
+    ## parse arguments
+    parser = OptionParser(usage = '%prog [options] paradigm_directory analysis_file')
+    Stack.addJobTreeOptions(parser)
+    parser.add_option('--jobFile', help='Add as child of jobFile rather than new jobTree')
+    parser.add_option('-c', '--config', dest='config_file', default=None)
+    parser.add_option('-s', '--samples', dest='include_samples', default=None)
+    parser.add_option('-f', '--features', dest='include_features', default=None)
+    parser.add_option('-n', '--nulls', dest='nulls', default=30)
+    parser.add_option('-b', '--batchsize', dest='batch_size', default=50)
+    parser.add_option('-p', '--public', action='store_true', dest='paradigm_public', default=False)
+    parser.add_option('-z', '--seed', dest='seed', default=None)
+    options, args = parser.parse_args()
+    logger('Using Batch System : %s\n' % (options.batchSystem))
+    
+    if len(args) == 1:
+        if args[0] == 'clean':
+            command = 'rm -rf .jobTree analysis html'
+            logger(command)
+            os.system(command)
+            sys.exit(0)
+    
+    assert len(args) == 2
+    paradigm_directory = os.path.abspath(args[0])
+    analysis_file = args[1]
+    
+    ## set Paradigm files
+    paradigm_setup = ParadigmSetup(paradigm_directory,
+                                   options.include_samples,
+                                   nulls = int(options.nulls),
+                                   batch_size = int(options.batch_size),
+                                   public = options.paradigm_public)
+    
+    ## set pathway
+    global_pathway = Pathway(paradigm_setup.pathway)
+    
+    ## set parameters
+    parameters = Parameters()
+    if options.config_file:
+        parameters.importConfig(options.config_file)
+    parameters.setSeed(seed_input = options.seed)
+    parameters.printSeed()
+    
+    ## read alterations
+    if options.include_features:
+        include_features = readList(options.include_features)
+    else:
+        include_features = None
+    altered_list = []
+    f = open(analysis_file, 'r')
+    for line in f:
+        if line.isspace():
+            continue
+        pline = line.rstrip().split('\t')
+        if len(pline) == 3:
+            altered = Alterations(pline[0],
+                                  pline[1],
+                                  paradigm_setup.samples,
+                                  pline[2].split(','),
+                                  negative_samples = None,
+                                  directory = os.getcwd())
+        elif len(pline) == 4:
+            altered = Alterations(pline[0],
+                                  pline[1],
+                                  paradigm_setup.samples,
+                                  pline[2].split(','),
+                                  negative_samples = pline[3].split(','),
+                                  directory = os.getcwd())
+        if altered.focus_gene in global_pathway.nodes:
+            if include_features != None:
+                if altered.focus_gene not in include_features:
+                    continue
+            if len(altered.positive_samples) >= min_alterations:
+                altered_list.append(altered)
+    f.close()
     
     ## run
-    logger.info("options: " + str(options))
-    logger.info("starting make")
-    writeScripts()
-    if runParallel:
-        s = Stack(branchGenes(submitList, paradigmSetup, gPathway, params, foldMap,
-                              os.getcwd()))
+    if in_parallel:
+        s = Stack(branchAnalyses(altered_list,
+                                 paradigm_setup,
+                                 global_pathway,
+                                 parameters,
+                                 os.getcwd()))
     else:
-        s = Stack(queueGenes(submitList, paradigmSetup, gPathway, params, foldMap,
-                             os.getcwd()))
+        s = Stack(queueAnalyses(altered_list,
+                                paradigm_setup,
+                                global_pathway,
+                                parameters,
+                                os.getcwd()))
     if options.jobFile:
         s.addToJobFile(options.jobFile)
     else:
         if options.jobTree == None:
-            options.jobTree = "./.jobTree"
+            options.jobTree = './.jobTree'
         
         failed = s.startJobTree(options)
         if failed:
-            print ("%d jobs failed" % failed)
+            logger('%d jobs failed\n' % failed)
         else:
-            logger.info("Run complete!")
-            system("rm -rf .lastjobTree")
-            system("mv .jobTree .lastjobTree")
+            os.system('rm -rf .lastjobTree')
+            os.system('mv .jobTree .lastjobTree')
 
-if __name__ == "__main__":
+if __name__ == '__main__':
     from paradigmSHIFT import *
     main()
