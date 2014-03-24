@@ -637,21 +637,22 @@ def getSelectedNeighborhood(focus_gene, data_map, positive_samples, negative_sam
         if getUpstreamValue(feature, rank_map) > 0:
             ranked_upstream_features.append(feature)
     ranked_upstream_features.sort(lambda x, y: cmp(getUpstreamValue(y, rank_map), getUpstreamValue(x, rank_map)))
-    while (len(selected_upstream_features) < 4) or (getUpstreamValue(ranked_upstream_features[0], rank_map) >= threshold + cost*len(selected_upstream_features)):
-        if len(ranked_upstream_features) == 0:
-            break
-        current_feature = ranked_upstream_features.pop(0)
-        logger('%s\t%s\t%s\t%s\n' % (current_feature, getUpstreamValue(current_feature, rank_map), len(selected_upstream_features), upstream_path_map[current_feature]), file = 'selection.log')
-        selected_upstream_features.append(current_feature)
-        for path in upstream_path_map[current_feature]:
-            for edge in path:
-                if edge[0] not in selected_upstream_pathway.nodes:
-                    selected_upstream_pathway.nodes[edge[0]] = upstream_pathway.nodes[edge[0]]
-                if edge[2] not in selected_upstream_pathway.nodes:
-                    selected_upstream_pathway.nodes[edge[2]] = upstream_pathway.nodes[edge[2]]
-                if edge[0] not in selected_upstream_pathway.interactions:
-                    selected_upstream_pathway.interactions[edge[0]] = {}
-                selected_upstream_pathway.interactions[edge[0]][edge[2]] = edge[1]
+    if len(ranked_upstream_features) > 0:
+        while (len(selected_upstream_features) < 4) or (getUpstreamValue(ranked_upstream_features[0], rank_map) >= threshold + cost*len(selected_upstream_features)):
+            current_feature = ranked_upstream_features.pop(0)
+            logger('%s\t%s\t%s\t%s\n' % (current_feature, getUpstreamValue(current_feature, rank_map), len(selected_upstream_features), upstream_path_map[current_feature]), file = 'selection.log')
+            selected_upstream_features.append(current_feature)
+            for path in upstream_path_map[current_feature]:
+                for edge in path:
+                    if edge[0] not in selected_upstream_pathway.nodes:
+                        selected_upstream_pathway.nodes[edge[0]] = upstream_pathway.nodes[edge[0]]
+                    if edge[2] not in selected_upstream_pathway.nodes:
+                        selected_upstream_pathway.nodes[edge[2]] = upstream_pathway.nodes[edge[2]]
+                    if edge[0] not in selected_upstream_pathway.interactions:
+                        selected_upstream_pathway.interactions[edge[0]] = {}
+                    selected_upstream_pathway.interactions[edge[0]][edge[2]] = edge[1]
+            if len(ranked_upstream_features) == 0:
+                break
     logger('## downstream neighborhood\n', file = 'selection.log')
     selected_downstream_pathway = Pathway( ({focus_gene : downstream_pathway.nodes[focus_gene]}, {}) )
     selected_downstream_features = []
@@ -660,21 +661,22 @@ def getSelectedNeighborhood(focus_gene, data_map, positive_samples, negative_sam
         if getDownstreamValue(feature, rank_map) > 0:
             ranked_downstream_features.append(feature)
     ranked_downstream_features.sort(lambda x, y: cmp(getDownstreamValue(y, rank_map), getDownstreamValue(x, rank_map)))
-    while (len(selected_downstream_features) < 4) or (getDownstreamValue(ranked_downstream_features[0], rank_map) >= threshold + cost*len(selected_downstream_features)):
-        if len(ranked_downstream_features) == 0:
-            break
-        current_feature = ranked_downstream_features.pop(0)
-        logger('%s\t%s\t%s\t%s\n' % (current_feature, getDownstreamValue(current_feature, rank_map), len(selected_downstream_features), downstream_path_map[current_feature]), file = 'selection.log')
-        selected_downstream_features.append(current_feature)
-        for path in downstream_path_map[current_feature]:
-            for edge in path:
-                if edge[0] not in selected_downstream_pathway.nodes:
-                    selected_downstream_pathway.nodes[edge[0]] = downstream_pathway.nodes[edge[0]]
-                if edge[2] not in selected_downstream_pathway.nodes:
-                    selected_downstream_pathway.nodes[edge[2]] = downstream_pathway.nodes[edge[2]]
-                if edge[0] not in selected_downstream_pathway.interactions:
-                    selected_downstream_pathway.interactions[edge[0]] = {}
-                selected_downstream_pathway.interactions[edge[0]][edge[2]] = edge[1]
+    if len(ranked_downstream_features) > 0:
+        while (len(selected_downstream_features) < 4) or (getDownstreamValue(ranked_downstream_features[0], rank_map) >= threshold + cost*len(selected_downstream_features)):
+            current_feature = ranked_downstream_features.pop(0)
+            logger('%s\t%s\t%s\t%s\n' % (current_feature, getDownstreamValue(current_feature, rank_map), len(selected_downstream_features), downstream_path_map[current_feature]), file = 'selection.log')
+            selected_downstream_features.append(current_feature)
+            for path in downstream_path_map[current_feature]:
+                for edge in path:
+                    if edge[0] not in selected_downstream_pathway.nodes:
+                        selected_downstream_pathway.nodes[edge[0]] = downstream_pathway.nodes[edge[0]]
+                    if edge[2] not in selected_downstream_pathway.nodes:
+                        selected_downstream_pathway.nodes[edge[2]] = downstream_pathway.nodes[edge[2]]
+                    if edge[0] not in selected_downstream_pathway.interactions:
+                        selected_downstream_pathway.interactions[edge[0]] = {}
+                    selected_downstream_pathway.interactions[edge[0]][edge[2]] = edge[1]
+            if len(ranked_downstream_features) == 0:
+                break
     return(selected_upstream_pathway, selected_downstream_pathway, ((len(selected_upstream_features) >= 4) and (len(selected_downstream_features) >= 4)))
 
 def getBatchCount(cohort_size, batch_size = 15):
