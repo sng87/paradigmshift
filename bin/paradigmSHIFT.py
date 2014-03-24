@@ -954,7 +954,7 @@ class jtCmd(Target):
     def run(self):
         os.chdir(self.directory)
         if file:
-            o = open(file, 'a')
+            o = open(self.file, 'a')
             o.write('%s\n' % (self.command))
             o.close()
         os.system(self.command)
