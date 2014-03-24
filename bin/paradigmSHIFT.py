@@ -15,8 +15,9 @@ from jobTree.scriptTree.target import Target
 from jobTree.scriptTree.stack import Stack
 
 ## default executables
-paradigm_executable = 'paradigm'
-circleplot_executable = 'circlePlot.py'
+base_directory = os.path.dirname(os.path.abspath(__file__))
+paradigm_executable = os.path.join(base_directory, 'paradigm')
+circleplot_executable = os.path.join(base_directory, 'circlePlot.py')
 
 ## default variables
 in_parallel = False     ## run events in parallel
@@ -1154,8 +1155,8 @@ class selectNeighborhood(Target):
         
         ## get upstream and downstream base neighborhoods per complex, then combine
         (group_index, group_pathways) = getFullNeighborhood(self.analysis.focus_gene, self.global_pathway, max_distance = self.current_parameters[0])
-        combined_upstream = Pathway( ({}, {}) )
-        combined_downstream = Pathway( ({}, {}) )
+        combined_upstream = Pathway( ({self.analysis.focus_gene : self.global_pathway.nodes[self.analysis.focus_gene]}, {}) )
+        combined_downstream = Pathway( ({self.analysis.focus_gene : self.global_pathway.nodes[self.analysis.focus_gene]}, {}) )
         for index in group_pathways:
             combined_upstream.appendPathway(group_pathways[index][0])
             combined_downstream.appendPathway(group_pathways[index][1])
@@ -1641,7 +1642,7 @@ def main():
             os.system(command)
             sys.exit(0)
     
-    assert len(args) == 2
+    assert(len(args) == 2)
     paradigm_directory = os.path.abspath(args[0])
     analysis_file = args[1]
     
