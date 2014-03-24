@@ -16,8 +16,10 @@ from jobTree.scriptTree.stack import Stack
 
 ## default executables
 base_directory = os.path.dirname(os.path.abspath(__file__))
-paradigm_executable = os.path.join(base_directory, 'paradigm')
-circleplot_executable = os.path.join(base_directory, 'circlePlot.py')
+# paradigm_executable = os.path.join(base_directory, 'paradigm')
+# circleplot_executable = os.path.join(base_directory, 'circlePlot.py')
+paradigm_executable = 'paradigm'
+circleplot_executable = 'circlePlot.py'
 
 ## default variables
 in_parallel = False     ## run events in parallel
@@ -636,6 +638,8 @@ def getSelectedNeighborhood(focus_gene, data_map, positive_samples, negative_sam
             ranked_upstream_features.append(feature)
     ranked_upstream_features.sort(lambda x, y: cmp(getUpstreamValue(y, rank_map), getUpstreamValue(x, rank_map)))
     while (len(selected_upstream_features) < 4) or (getUpstreamValue(ranked_upstream_features[0], rank_map) >= threshold + cost*len(selected_upstream_features)):
+        if len(ranked_upstream_features) == 0:
+            break
         current_feature = ranked_upstream_features.pop(0)
         logger('%s\t%s\t%s\t%s\n' % (current_feature, getUpstreamValue(current_feature, rank_map), len(selected_upstream_features), upstream_path_map[current_feature]), file = 'selection.log')
         selected_upstream_features.append(current_feature)
@@ -648,8 +652,6 @@ def getSelectedNeighborhood(focus_gene, data_map, positive_samples, negative_sam
                 if edge[0] not in selected_upstream_pathway.interactions:
                     selected_upstream_pathway.interactions[edge[0]] = {}
                 selected_upstream_pathway.interactions[edge[0]][edge[2]] = edge[1]
-        if len(ranked_upstream_features) == 0:
-            break
     logger('## downstream neighborhood\n', file = 'selection.log')
     selected_downstream_pathway = Pathway( ({focus_gene : downstream_pathway.nodes[focus_gene]}, {}) )
     selected_downstream_features = []
@@ -659,6 +661,8 @@ def getSelectedNeighborhood(focus_gene, data_map, positive_samples, negative_sam
             ranked_downstream_features.append(feature)
     ranked_downstream_features.sort(lambda x, y: cmp(getDownstreamValue(y, rank_map), getDownstreamValue(x, rank_map)))
     while (len(selected_downstream_features) < 4) or (getDownstreamValue(ranked_downstream_features[0], rank_map) >= threshold + cost*len(selected_downstream_features)):
+        if len(ranked_downstream_features) == 0:
+            break
         current_feature = ranked_downstream_features.pop(0)
         logger('%s\t%s\t%s\t%s\n' % (current_feature, getDownstreamValue(current_feature, rank_map), len(selected_downstream_features), downstream_path_map[current_feature]), file = 'selection.log')
         selected_downstream_features.append(current_feature)
@@ -671,9 +675,7 @@ def getSelectedNeighborhood(focus_gene, data_map, positive_samples, negative_sam
                 if edge[0] not in selected_downstream_pathway.interactions:
                     selected_downstream_pathway.interactions[edge[0]] = {}
                 selected_downstream_pathway.interactions[edge[0]][edge[2]] = edge[1]
-        if len(ranked_downstream_features) == 0:
-            break
-    return(selected_upstream_pathway, selected_downstream_pathway)
+    return(selected_upstream_pathway, selected_downstream_pathway, ((len(selected_upstream_features) >= 4) and (len(selected_downstream_features) >= 4)))
 
 def getBatchCount(cohort_size, batch_size = 15):
     """
@@ -1172,7 +1174,7 @@ class selectNeighborhood(Target):
             data_map['active'] = pandas.read_csv(self.paradigm_setup.active[0], sep = '\t', index_col = 0)
         positive_samples = list(set(self.training_samples) & set(self.analysis.positive_samples))
         negative_samples = list(set(self.training_samples) & set(self.analysis.negative_samples))
-        (selected_upstream, selected_downstream) = getSelectedNeighborhood(self.analysis.focus_gene,
+        (selected_upstream, selected_downstream, selection_pass) = getSelectedNeighborhood(self.analysis.focus_gene,
                                                data_map,
                                                positive_samples,
                                                negative_samples,
@@ -1198,7 +1200,7 @@ class selectNeighborhood(Target):
         selected_upstream.writeSPF('upstream_pathway.tab')
         selected_downstream.writeSPF('downstream_pathway.tab')
         
-        if False:
+        if not selection_pass:
             o = open('auc.stat', 'w')
             o.write('---\t---\n')
             o.close()
