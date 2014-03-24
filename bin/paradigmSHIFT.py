@@ -947,12 +947,16 @@ def computeSeparation(positive_samples, negative_samples, pshift_map, method = '
 
 ## jt classes
 class jtCmd(Target):
-    def __init__(self, command, directory):
+    def __init__(self, command, directory, file = None):
         Target.__init__(self, time=1000)
         self.command = command
         self.directory = directory
     def run(self):
         os.chdir(self.directory)
+        if file:
+            o = open(file, 'a')
+            o.write('%s\n' % (self.command))
+            o.close()
         os.system(self.command)
 
 class queueAnalyses(Target):
@@ -1236,27 +1240,27 @@ class runParadigm(Target):
         ## run Paradigm (observed and nulls)
         batches = getBatchCount(len(self.paradigm_setup.samples), batch_size = self.paradigm_setup.batch_size)
         if batches == 0:
-            self.addChildTarget(jtCmd('%s -p upstream_pathway.tab -c config.txt -b %s -o %s' % (paradigm_executable, 'data/up_', 'paradigm/%s_upstream.fa' % (self.analysis.focus_gene)), self.directory))
-            self.addChildTarget(jtCmd('%s -p downstream_pathway.tab -c config.txt -b %s -o %s' % (paradigm_executable, 'data/down_', 'paradigm/%s_downstream.fa' % (self.analysis.focus_gene)), self.directory))
+            self.addChildTarget(jtCmd('%s -p upstream_pathway.tab -c config.txt -b %s -o %s' % (paradigm_executable, 'data/up_', 'paradigm/%s_upstream.fa' % (self.analysis.focus_gene)), self.directory, file = 'jobs.list'))
+            self.addChildTarget(jtCmd('%s -p downstream_pathway.tab -c config.txt -b %s -o %s' % (paradigm_executable, 'data/down_', 'paradigm/%s_downstream.fa' % (self.analysis.focus_gene)), self.directory, file = 'jobs.list'))
             for null in range(1, self.paradigm_setup.nulls + 1):
-                self.addChildTarget(jtCmd('%s -p upstream_pathway.tab -c config.txt -b %s -o %s' % (paradigm_executable, 'data/up_N%s_' % (null), 'paradigm/N%s_%s_upstream.fa' % (null, self.analysis.focus_gene)), self.directory))
-                self.addChildTarget(jtCmd('%s -p downstream_pathway.tab -c config.txt -b %s -o %s' % (paradigm_executable, 'data/down_N%s_' % (null), 'paradigm/N%s_%s_downstream.fa' % (null, self.analysis.focus_gene)), self.directory))
+                self.addChildTarget(jtCmd('%s -p upstream_pathway.tab -c config.txt -b %s -o %s' % (paradigm_executable, 'data/up_N%s_' % (null), 'paradigm/N%s_%s_upstream.fa' % (null, self.analysis.focus_gene)), self.directory, file = 'jobs.list'))
+                self.addChildTarget(jtCmd('%s -p downstream_pathway.tab -c config.txt -b %s -o %s' % (paradigm_executable, 'data/down_N%s_' % (null), 'paradigm/N%s_%s_downstream.fa' % (null, self.analysis.focus_gene)), self.directory, file = 'jobs.list'))
         elif self.paradigm_setup.public:
             os.mkdir('outputFiles')
             for b in range(batches):
-                self.addChildTarget(jtCmd('%s -p upstream_pathway.tab -c config.txt -b %s -o %s' % (paradigm_executable, 'data/up_b%s_%s_' % (b, batches), 'outputFiles/%s_upstream_b%s_%s.fa' % (self.analysis.focus_gene, b, batches)), self.directory))
-                self.addChildTarget(jtCmd('%s -p downstream_pathway.tab -c config.txt -b %s -o %s' % (paradigm_executable, 'data/down_b%s_%s_' % (b, batches), 'outputFiles/%s_downstream_b%s_%s.fa' % (self.analysis.focus_gene, b, batches)), self.directory))
+                self.addChildTarget(jtCmd('%s -p upstream_pathway.tab -c config.txt -b %s -o %s' % (paradigm_executable, 'data/up_b%s_%s_' % (b, batches), 'outputFiles/%s_upstream_b%s_%s.fa' % (self.analysis.focus_gene, b, batches)), self.directory, file = 'jobs.list'))
+                self.addChildTarget(jtCmd('%s -p downstream_pathway.tab -c config.txt -b %s -o %s' % (paradigm_executable, 'data/down_b%s_%s_' % (b, batches), 'outputFiles/%s_downstream_b%s_%s.fa' % (self.analysis.focus_gene, b, batches)), self.directory, file = 'jobs.list'))
                 for null in range(1, self.paradigm_setup.nulls + 1):
-                    self.addChildTarget(jtCmd('%s -p upstream_pathway.tab -c config.txt -b %s -o %s' % (paradigm_executable, 'data/up_N%s_b%s_%s_' % (null, b, batches), 'outputFiles/N%s_%s_upstream_b%s_%s.fa' % (null, self.analysis.focus_gene, b, batches)), self.directory))
-                    self.addChildTarget(jtCmd('%s -p downstream_pathway.tab -c config.txt -b %s -o %s' % (paradigm_executable, 'data/down_N%s_b%s_%s_' % (null, b, batches), 'outputFiles/N%s_%s_downstream_b%s_%s.fa' % (null, self.analysis.focus_gene, b, batches)), self.directory))
+                    self.addChildTarget(jtCmd('%s -p upstream_pathway.tab -c config.txt -b %s -o %s' % (paradigm_executable, 'data/up_N%s_b%s_%s_' % (null, b, batches), 'outputFiles/N%s_%s_upstream_b%s_%s.fa' % (null, self.analysis.focus_gene, b, batches)), self.directory, file = 'jobs.list'))
+                    self.addChildTarget(jtCmd('%s -p downstream_pathway.tab -c config.txt -b %s -o %s' % (paradigm_executable, 'data/down_N%s_b%s_%s_' % (null, b, batches), 'outputFiles/N%s_%s_downstream_b%s_%s.fa' % (null, self.analysis.focus_gene, b, batches)), self.directory, file = 'jobs.list'))
         else:
             os.mkdir('outputFiles')
             for b in range(batches):
-                self.addChildTarget(jtCmd('%s -p upstream_pathway.tab -c config.txt -b %s -o %s -s %s,%s' % (paradigm_executable, 'data/up_', 'outputFiles/%s_upstream_b%s_%s.fa' % (self.analysis.focus_gene, b, batches), b, batches), self.directory))
-                self.addChildTarget(jtCmd('%s -p downstream_pathway.tab -c config.txt -b %s -o %s -s %s,%s' % (paradigm_executable, 'data/down_', 'outputFiles/%s_downstream_b%s_%s.fa' % (self.analysis.focus_gene, b, batches), b, batches), self.directory))
+                self.addChildTarget(jtCmd('%s -p upstream_pathway.tab -c config.txt -b %s -o %s -s %s,%s' % (paradigm_executable, 'data/up_', 'outputFiles/%s_upstream_b%s_%s.fa' % (self.analysis.focus_gene, b, batches), b, batches), self.directory, file = 'jobs.list'))
+                self.addChildTarget(jtCmd('%s -p downstream_pathway.tab -c config.txt -b %s -o %s -s %s,%s' % (paradigm_executable, 'data/down_', 'outputFiles/%s_downstream_b%s_%s.fa' % (self.analysis.focus_gene, b, batches), b, batches), self.directory, file = 'jobs.list'))
                 for null in range(1, self.paradigm_setup.nulls + 1):
-                    self.addChildTarget(jtCmd('%s -p upstream_pathway.tab -c config.txt -b %s -o %s -s %s,%s' % (paradigm_executable, 'data/up_N%s_' % (null), 'outputFiles/N%s_%s_upstream_b%s_%s.fa' % (null, self.analysis.focus_gene, b, batches), b, batches), self.directory))
-                    self.addChildTarget(jtCmd('%s -p downstream_pathway.tab -c config.txt -b %s -o %s -s %s,%s' % (paradigm_executable, 'data/down_N%s_' % (null), 'outputFiles/N%s_%s_downstream_b%s_%s.fa' % (null, self.analysis.focus_gene, b, batches), b, batches), self.directory))
+                    self.addChildTarget(jtCmd('%s -p upstream_pathway.tab -c config.txt -b %s -o %s -s %s,%s' % (paradigm_executable, 'data/up_N%s_' % (null), 'outputFiles/N%s_%s_upstream_b%s_%s.fa' % (null, self.analysis.focus_gene, b, batches), b, batches), self.directory, file = 'jobs.list'))
+                    self.addChildTarget(jtCmd('%s -p downstream_pathway.tab -c config.txt -b %s -o %s -s %s,%s' % (paradigm_executable, 'data/down_N%s_' % (null), 'outputFiles/N%s_%s_downstream_b%s_%s.fa' % (null, self.analysis.focus_gene, b, batches), b, batches), self.directory, file = 'jobs.list'))
         self.setFollowOnTarget(collectParadigm(self.analysis, self.paradigm_setup, self.directory))
 
 class collectParadigm(Target):
