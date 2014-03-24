@@ -951,9 +951,10 @@ class jtCmd(Target):
         Target.__init__(self, time=1000)
         self.command = command
         self.directory = directory
+        self.file = file
     def run(self):
         os.chdir(self.directory)
-        if file:
+        if self.file:
             o = open(self.file, 'a')
             o.write('%s\n' % (self.command))
             o.close()
