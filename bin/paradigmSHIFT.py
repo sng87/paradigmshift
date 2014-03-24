@@ -699,13 +699,13 @@ def generateData(focus_gene, upstream_features, downstream_features, allow_featu
         data_frame = pandas.read_csv(file, sep = '\t', index_col = 0)
         output_features = list(set(data_frame.columns) & (set(upstream_features) | set(downstream_features)))
         output_samples = include_samples
-        data_frame[output_features].loc[output_samples].transpose().to_csv('data/transposed_%s' % (file.split('/')[-1]), sep = '\t', na_rep = 'NA')
+        data_frame[output_features].loc[output_samples].transpose().to_csv('data/transposed_%s' % (file.split('/')[-1]), sep = '\t', na_rep = 'NA', index_label = 'genes')
         output_features = list(set(data_frame.columns) & set(upstream_features))
         output_samples = include_samples
-        data_frame[output_features].loc[output_samples].to_csv('data/up_%s' % (file.split('/')[-1]), sep = '\t', na_rep = 'NA')
+        data_frame[output_features].loc[output_samples].to_csv('data/up_%s' % (file.split('/')[-1]), sep = '\t', na_rep = 'NA', index_label = 'samples')
         output_features = list((set(data_frame.columns) & set(downstream_features)) - set([focus_gene]))
         output_samples = include_samples
-        data_frame[output_features].loc[output_samples].to_csv('data/down_%s' % (file.split('/')[-1]), sep = '\t', na_rep = 'NA')
+        data_frame[output_features].loc[output_samples].to_csv('data/down_%s' % (file.split('/')[-1]), sep = '\t', na_rep = 'NA', index_label = 'samples')
     for null in range(1, nulls + 1):
         feature_pool = list((set(upstream_features) | set(downstream_features)) - set([focus_gene]))
         permute_pool = list(set(allow_features) - set(feature_pool) - set([focus_gene]))
@@ -719,13 +719,13 @@ def generateData(focus_gene, upstream_features, downstream_features, allow_featu
             permute_features = [permute_map[feature] for feature in output_features]
             permute_data_frame = data_frame[permute_features].loc[output_samples].copy()
             permute_data_frame.columns = output_features
-            permute_data_frame .to_csv('data/up_N%s_%s' % (null, file.split('/')[-1]), sep = '\t', na_rep = 'NA')
+            permute_data_frame.to_csv('data/up_N%s_%s' % (null, file.split('/')[-1]), sep = '\t', na_rep = 'NA', index_label = 'samples')
             output_features = list((set(data_frame.columns) & set(downstream_features)) - set([focus_gene]))
             output_samples = include_samples
             permute_features = [permute_map[feature] for feature in output_features]
             permute_data_frame = data_frame[permute_features].loc[output_samples].copy()
             permute_data_frame.columns = output_features
-            permute_data_frame .to_csv('data/down_N%s_%s' % (null, file.split('/')[-1]), sep = '\t', na_rep = 'NA')
+            permute_data_frame.to_csv('data/down_N%s_%s' % (null, file.split('/')[-1]), sep = '\t', na_rep = 'NA', index_label = 'samples')
 
 def generateBatchedData(focus_gene, upstream_features, downstream_features, allow_features, include_samples, data_files, nulls = 0, batch_size = 50, random_seed = 1):
     """
@@ -737,17 +737,17 @@ def generateBatchedData(focus_gene, upstream_features, downstream_features, allo
         data_frame = pandas.read_csv(file, sep = '\t', index_col = 0)
         output_features = list(set(data_frame.columns) & (set(upstream_features) | set(downstream_features)))
         output_samples = include_samples
-        data_frame[output_features].loc[output_samples].transpose().to_csv('data/transposed_%s' % (file.split('/')[-1]), sep = '\t', na_rep = 'NA')
+        data_frame[output_features].loc[output_samples].transpose().to_csv('data/transposed_%s' % (file.split('/')[-1]), sep = '\t', na_rep = 'NA', index_label = 'genes')
         batches = getBatchCount(len(include_samples), batch_size = batch_size)
         chunker = getChunks(include_samples, batch_size = batch_size)
         for b in range(batches):
             current_chunk = chunker.next()
             output_features = list(set(data_frame.columns) & set(upstream_features))
             output_samples = current_chunk
-            data_frame[output_features].loc[output_samples].to_csv('data/up_b%s_%s_%s' % (b, batches, file.split('/')[-1]), sep = '\t', na_rep = 'NA')
+            data_frame[output_features].loc[output_samples].to_csv('data/up_b%s_%s_%s' % (b, batches, file.split('/')[-1]), sep = '\t', na_rep = 'NA', index_label = 'samples')
             output_features = list((set(data_frame.columns) & set(downstream_features)) - set([focus_gene]))
             output_samples = current_chunk
-            data_frame[output_features].loc[output_samples].to_csv('data/down_b%s_%s_%s' % (b, batches, file.split('/')[-1]), sep = '\t', na_rep = 'NA')
+            data_frame[output_features].loc[output_samples].to_csv('data/down_b%s_%s_%s' % (b, batches, file.split('/')[-1]), sep = '\t', na_rep = 'NA', index_label = 'samples')
     for null in range(1, nulls + 1):
         feature_pool = list((set(upstream_features) | set(downstream_features)) - set([focus_gene]))
         permute_pool = list(set(allow_features) - set(feature_pool) - set([focus_gene]))
@@ -765,13 +765,13 @@ def generateBatchedData(focus_gene, upstream_features, downstream_features, allo
                 permute_features = [permute_map[feature] for feature in output_features]
                 permute_data_frame = data_frame[permute_features].loc[output_samples].copy()
                 permute_data_frame.columns = output_features
-                permute_data_frame .to_csv('data/up_N%s_b%s_%s_%s' % (null, b, batches, file.split('/')[-1]), sep = '\t', na_rep = 'NA')
+                permute_data_frame .to_csv('data/up_N%s_b%s_%s_%s' % (null, b, batches, file.split('/')[-1]), sep = '\t', na_rep = 'NA', index_label = 'samples')
                 output_features = list((set(data_frame.columns) & set(downstream_features)) - set([focus_gene]))
                 output_samples = current_chunk
                 permute_features = [permute_map[feature] for feature in output_features]
                 permute_data_frame = data_frame[permute_features].loc[output_samples].copy()
                 permute_data_frame.columns = output_features
-                permute_data_frame .to_csv('data/down_N%s_b%s_%s_%s' % (null, b, batches, file.split('/')[-1]), sep = '\t', na_rep = 'NA')
+                permute_data_frame .to_csv('data/down_N%s_b%s_%s_%s' % (null, b, batches, file.split('/')[-1]), sep = '\t', na_rep = 'NA', index_label = 'samples')
 
 def readParadigm(input_file, include_features = None):
     """
