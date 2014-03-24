@@ -1098,8 +1098,8 @@ class branchParameters(Target):
             for round in range(1, self.parameters.n_rounds + 1):
                 for fold in range(1, self.parameters.m_folds + 1):
                     fold_index = (round - 1)*self.parameters.m_folds + fold
-                    if os.path.exists('fold%s/auc.stat' % (fold_index)):
-                        f = open('fold%s/auc.stat' % (fold_index), 'r')
+                    if os.path.exists('fold%s/auc.tab' % (fold_index)):
+                        f = open('fold%s/auc.tab' % (fold_index), 'r')
                         line = f.readline()
                         f.close()
                         (auc_train, auc_test, auc_params) = line.rstrip().split('\t')
@@ -1201,7 +1201,7 @@ class selectNeighborhood(Target):
         selected_downstream.writeSPF('downstream_pathway.tab')
         
         if not selection_pass:
-            o = open('auc.stat', 'w')
+            o = open('auc.tab', 'w')
             o.write('---\t---\n')
             o.close()
         else:
