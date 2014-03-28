@@ -1353,6 +1353,12 @@ class computeShifts(Target):
             else:
                 o.write("%s\t-\t%s\n" % (sample, raw_shifts[sample]))
         o.close()
+        o = open('wildtype_shifts.tab', 'w')
+        o.write("sample\tP-Shift\n")
+        for sample in self.paradigm_setup.samples:
+            if sample in training_negative + testing_negative:
+                o.write("%s\t%s\n" % (sample, raw_shifts[sample]))
+        o.close()
         o = open('normalized_pshift.tab', 'w')
         o.write("> %s\tNormalized_P-Shifts:Table\n" % (self.analysis.focus_gene))
         o.write("# sample\tclass\tP-Shift\n")

@@ -30,7 +30,7 @@ init.sh :
 	endif >> init.csh
 
 ../paradigm-scripts :
-	cd ..; git clone git://github.com/sng87/paradigm-scripts.git
+	cd ..; git clone git://github.com/ucscCancer/paradigm-scripts.git
 	cd ../paradigm-scripts; make
 
 clean :
