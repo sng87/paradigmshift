@@ -986,7 +986,7 @@ class queueAnalyses(Target):
         if len(self.analysis_list) > 0:
             analysis = self.analysis_list[0]
             if not os.path.exists('analysis/%s' % (analysis.directory)):
-                logger('Running analysis on %s (%s/%s)\n' % (analysis.analysis_name, len(report_list) + 1, len(report_list) + len(self.analysis_list)), file = 'progress.log')
+                logger('Running analysis on %s (%s/%s)\n' % (analysis.analysis_name, len(report_list) + 1, len(report_list) + len(self.analysis_list)), file = 'analysis/progress.log')
                 os.mkdir('analysis/%s' % (analysis.directory))
                 report_list.append(analysis.directory)
                 self.addChildTarget(branchFolds(analysis,
@@ -995,7 +995,7 @@ class queueAnalyses(Target):
                                                 self.parameters,
                                                 self.directory))
             else:
-                logger('Already performed analysis on %s (%s/%s)\n' % (analysis.analysis_name, len(report_list) + 1, len(report_list) + len(self.analysis_list)), file = 'progress.log')
+                logger('Already performed analysis on %s (%s/%s)\n' % (analysis.analysis_name, len(report_list) + 1, len(report_list) + len(self.analysis_list)), file = 'analysis/progress.log')
             self.setFollowOnTarget(queueAnalyses(self.analysis_list[1:],
                                                  self.paradigm_setup,
                                                  self.global_pathway,
