@@ -32,7 +32,7 @@ class ParadigmSetup:
     Dependencies: logger, returnColumns, returnRows, readList
     """
     def __init__(self, directory, include_samples, nulls = 30, batch_size = 50, public = False):
-        self.directory = directory
+        self.directory = directory.rstrip('/')
         self.nulls = nulls
         self.batch_size = batch_size
         self.public = public
@@ -114,6 +114,7 @@ class Parameters:
         self.threshold = [0.84]
         self.cost = [0.0]
         self.selection_method = ['tt']
+        self.model_directory = None
         self.cross_validation = True
         self.cross_validation_two_sided = False
         self.separation_method = 'tt'
@@ -132,10 +133,14 @@ class Parameters:
                 self.cost = [float(item) for item in pline[1].split(',')]
             elif line.startswith('selection') or line.startswith('selection_method'):
                 self.selection_method = [item for item in pline[1].split(',')]
+            elif line.startswith('model'):
+                self.model_directory = pline[1].rstrip('/')
             elif line.startswith('cv') or line.startswith('cross_validation'):
                 self.cross_validation = bool(int(pline[1]))
             elif line.startswith('msep') or line.startswith('separation_method'):
                 self.separation_method = pline[1]
+            elif line.startswith('report'):
+                self.report_directory = pline[1].rstrip('/')
         f.close()
     def setSeed(self, seed_input = None):
         if seed_input == None:
@@ -171,7 +176,7 @@ class Alterations:
 
 class Pathway:
     """
-    Paradigm compatible pathway class [2014-3-11]
+    Paradigm compatible pathway class [2014-3-28]
     Dependencies: logger
     """
     def __init__(self, input, pid = None):
@@ -981,6 +986,7 @@ class queueAnalyses(Target):
         if len(self.analysis_list) > 0:
             analysis = self.analysis_list[0]
             if not os.path.exists('analysis/%s' % (analysis.directory)):
+                logger('Running analysis on %s (%s/%s)\n' % (analysis.analysis_name, len(report_list) + 1, len(report_list) + len(self.analysis_list)), file = 'progress.log')
                 os.mkdir('analysis/%s' % (analysis.directory))
                 report_list.append(analysis.directory)
                 self.addChildTarget(branchFolds(analysis,
@@ -988,6 +994,8 @@ class queueAnalyses(Target):
                                                 self.global_pathway,
                                                 self.parameters,
                                                 self.directory))
+            else:
+                logger('Already performed analysis on %s (%s/%s)\n' % (analysis.analysis_name, len(report_list) + 1, len(report_list) + len(self.analysis_list)), file = 'progress.log')
             self.setFollowOnTarget(queueAnalyses(self.analysis_list[1:],
                                                  self.paradigm_setup,
                                                  self.global_pathway,
@@ -1162,56 +1170,67 @@ class selectNeighborhood(Target):
             os.chdir(ps_directory)
         logger('Selecting neighborhood ...\n', file = 'progress.log')
         
+        ## use trained model if it exists
+        selected_upstream = None
+        selected_downstream = None
+        if self.parameters.model_directory is not None:
+            model_path = ''
+            if self.parameters.model_directory.startswith('/'):
+                model_path = '%s/%s' % (self.parameters.model_directory, self.analysis.focus_gene)
+            else:
+                model_path = '%s/%s/%s' % (self.directory, self.parameters.model_directory, self.analysis.focus_gene)
+            if (os.path.exists('%s/upstream_pathway.tab' % (model_path))) and (os.path.exists('%s/downstream_pathway.tab' % (model_path))):
+                logger('Using trained model ...\n', file = 'progress.log')
+                selected_upstream = Pathway('%s/upstream_pathway.tab' % (model_path))
+                selected_downstream = Pathway('%s/upstream_pathway.tab' % (model_path))
+        
         ## get upstream and downstream base neighborhoods per complex, then combine
-        (group_index, group_pathways) = getFullNeighborhood(self.analysis.focus_gene, self.global_pathway, max_distance = self.current_parameters[0])
-        combined_upstream = Pathway( ({self.analysis.focus_gene : self.global_pathway.nodes[self.analysis.focus_gene]}, {}) )
-        combined_downstream = Pathway( ({self.analysis.focus_gene : self.global_pathway.nodes[self.analysis.focus_gene]}, {}) )
-        for index in group_pathways:
-            combined_upstream.appendPathway(group_pathways[index][0])
-            combined_downstream.appendPathway(group_pathways[index][1])
+        if (selected_upstream is None) and (selected_downstream is None):
+            (group_index, group_pathways) = getFullNeighborhood(self.analysis.focus_gene, self.global_pathway, max_distance = self.current_parameters[0])
+            combined_upstream = Pathway( ({self.analysis.focus_gene : self.global_pathway.nodes[self.analysis.focus_gene]}, {}) )
+            combined_downstream = Pathway( ({self.analysis.focus_gene : self.global_pathway.nodes[self.analysis.focus_gene]}, {}) )
+            for index in group_pathways:
+                combined_upstream.appendPathway(group_pathways[index][0])
+                combined_downstream.appendPathway(group_pathways[index][1])
         
-        ## identify all interaction paths relevant to the Paradigm-Shift task
-        (upstream_path_map, downstream_path_map) = getRelevantPaths(self.analysis.focus_gene, combined_upstream, combined_downstream, max_distance = self.current_parameters[0])
+            ## identify all interaction paths relevant to the Paradigm-Shift task
+            (upstream_path_map, downstream_path_map) = getRelevantPaths(self.analysis.focus_gene, combined_upstream, combined_downstream, max_distance = self.current_parameters[0])
         
-        ## score and select features
-        data_map = {}
-        assert(len(self.paradigm_setup.mrna) > 0)
-        data_map['mrna'] = pandas.read_csv(self.paradigm_setup.mrna[0], sep = '\t', index_col = 0)
-        if len(self.paradigm_setup.active) > 0:
-            data_map['active'] = pandas.read_csv(self.paradigm_setup.active[0], sep = '\t', index_col = 0)
-        positive_samples = list(set(self.training_samples) & set(self.analysis.positive_samples))
-        negative_samples = list(set(self.training_samples) & set(self.analysis.negative_samples))
-        (selected_upstream, selected_downstream, selection_pass) = getSelectedNeighborhood(self.analysis.focus_gene,
-                                               data_map,
-                                               positive_samples,
-                                               negative_samples,
-                                               upstream_path_map,
-                                               downstream_path_map,
-                                               combined_upstream,
-                                               combined_downstream,
-                                               threshold = self.current_parameters[1],
-                                               cost = self.current_parameters[2],
-                                               method = self.current_parameters[3])
-        
-        ## generate necessary data for the Paradigm run
-        os.mkdir('data')
-        data_files = self.paradigm_setup.genome + self.paradigm_setup.mrna + self.paradigm_setup.protein + self.paradigm_setup.active
-        upstream_features = list(set(selected_upstream.nodes.keys()) & set(self.paradigm_setup.features))
-        downstream_features = list(set(selected_downstream.nodes.keys()) & set(self.paradigm_setup.features))
-        if self.paradigm_setup.public:
-            generateBatchedData(self.analysis.focus_gene, upstream_features, downstream_features, self.paradigm_setup.features, self.paradigm_setup.samples, data_files, nulls = self.paradigm_setup.nulls, batch_size = self.paradigm_setup.batch_size, random_seed = self.parameters.random_seed + self.fold)
-        else:
-            generateData(self.analysis.focus_gene, upstream_features, downstream_features, self.paradigm_setup.features, self.paradigm_setup.samples, data_files, nulls = self.paradigm_setup.nulls, random_seed = self.parameters.random_seed + self.fold)
-        
-        ## output pathway
-        selected_upstream.writeSPF('upstream_pathway.tab')
-        selected_downstream.writeSPF('downstream_pathway.tab')
+            ## score and select features
+            data_map = {}
+            assert(len(self.paradigm_setup.mrna) > 0)
+            data_map['mrna'] = pandas.read_csv(self.paradigm_setup.mrna[0], sep = '\t', index_col = 0)
+            if len(self.paradigm_setup.active) > 0:
+                data_map['active'] = pandas.read_csv(self.paradigm_setup.active[0], sep = '\t', index_col = 0)
+            positive_samples = list(set(self.training_samples) & set(self.analysis.positive_samples))
+            negative_samples = list(set(self.training_samples) & set(self.analysis.negative_samples))
+            (selected_upstream, selected_downstream, selection_pass) = getSelectedNeighborhood(self.analysis.focus_gene,
+                                                   data_map,
+                                                   positive_samples,
+                                                   negative_samples,
+                                                   upstream_path_map,
+                                                   downstream_path_map,
+                                                   combined_upstream,
+                                                   combined_downstream,
+                                                   threshold = self.current_parameters[1],
+                                                   cost = self.current_parameters[2],
+                                                   method = self.current_parameters[3])
         
         if not selection_pass:
             o = open('auc.tab', 'w')
             o.write('---\t---\n')
             o.close()
         else:
+            os.mkdir('data')
+            data_files = self.paradigm_setup.genome + self.paradigm_setup.mrna + self.paradigm_setup.protein + self.paradigm_setup.active
+            upstream_features = list(set(selected_upstream.nodes.keys()) & set(self.paradigm_setup.features))
+            downstream_features = list(set(selected_downstream.nodes.keys()) & set(self.paradigm_setup.features))
+            if self.paradigm_setup.public:
+                generateBatchedData(self.analysis.focus_gene, upstream_features, downstream_features, self.paradigm_setup.features, self.paradigm_setup.samples, data_files, nulls = self.paradigm_setup.nulls, batch_size = self.paradigm_setup.batch_size, random_seed = self.parameters.random_seed + self.fold)
+            else:
+                generateData(self.analysis.focus_gene, upstream_features, downstream_features, self.paradigm_setup.features, self.paradigm_setup.samples, data_files, nulls = self.paradigm_setup.nulls, random_seed = self.parameters.random_seed + self.fold)
+            selected_upstream.writeSPF('upstream_pathway.tab')
+            selected_downstream.writeSPF('downstream_pathway.tab')
             self.addChildTarget(runParadigm(self.analysis, self.paradigm_setup, ps_directory))
             self.setFollowOnTarget(computeShifts(self.fold,
                                                  self.analysis,
@@ -1695,14 +1714,14 @@ def main():
                                   paradigm_setup.samples,
                                   pline[2].split(','),
                                   negative_samples = None,
-                                  directory = os.getcwd())
+                                  directory = os.getcwd().rstrip('/'))
         elif len(pline) == 4:
             altered = Alterations(pline[0],
                                   pline[1],
                                   paradigm_setup.samples,
                                   pline[2].split(','),
                                   negative_samples = pline[3].split(','),
-                                  directory = os.getcwd())
+                                  directory = os.getcwd().rstrip('/'))
         if altered.focus_gene in global_pathway.nodes:
             if include_features != None:
                 if altered.focus_gene not in include_features:
@@ -1717,13 +1736,13 @@ def main():
                                  paradigm_setup,
                                  global_pathway,
                                  parameters,
-                                 os.getcwd()))
+                                 os.getcwd().rstrip('/')))
     else:
         s = Stack(queueAnalyses(altered_list,
                                 paradigm_setup,
                                 global_pathway,
                                 parameters,
-                                os.getcwd()))
+                                os.getcwd().rstrip('/')))
     if options.jobFile:
         s.addToJobFile(options.jobFile)
     else:
