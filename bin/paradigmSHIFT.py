@@ -968,7 +968,7 @@ class jtCmd(Target):
         os.system(self.command)
 
 class queueAnalyses(Target):
-    def __init__(self, analysis_list, paradigm_setup, global_pathway, parameters, directory, last_report_list = []):
+    def __init__(self, analysis_list, paradigm_setup, global_pathway, parameters, directory, last_report_list = [], run_analyses = None, total_analyses = None):
         Target.__init__(self, time=10000)
         self.analysis_list = analysis_list
         self.paradigm_setup = paradigm_setup
@@ -976,17 +976,22 @@ class queueAnalyses(Target):
         self.parameters = parameters
         self.directory = directory
         self.last_report_list = last_report_list
+        self.run_analyses = run_analyses
+        self.total_analyses = total_analyses
     def run(self):
         os.chdir(self.directory)
         
         ## queue analyses
         report_list = deepcopy(self.last_report_list)
+        if self.total_analyses is None:
+            self.run_analyses = 0
+            self.total_analyses = len(self.analysis_list)
         if not os.path.exists('analysis'):
             os.mkdir('analysis')
         if len(self.analysis_list) > 0:
             analysis = self.analysis_list[0]
             if not os.path.exists('analysis/%s' % (analysis.directory)):
-                logger('Running analysis on %s (%s/%s)\n' % (analysis.analysis_name, len(report_list) + 1, len(report_list) + len(self.analysis_list)), file = 'analysis/progress.log')
+                logger('Running analysis on %s (%s/%s)\n' % (analysis.analysis_name, self.run_analyses + 1, self.total_analyses), file = 'analysis/progress.log')
                 os.mkdir('analysis/%s' % (analysis.directory))
                 report_list.append(analysis.directory)
                 self.addChildTarget(branchFolds(analysis,
@@ -995,13 +1000,15 @@ class queueAnalyses(Target):
                                                 self.parameters,
                                                 self.directory))
             else:
-                logger('Already performed analysis on %s (%s/%s)\n' % (analysis.analysis_name, len(report_list) + 1, len(report_list) + len(self.analysis_list)), file = 'analysis/progress.log')
+                logger('Already performed analysis on %s (%s/%s)\n' % (analysis.analysis_name, self.run_analyses + 1, self.total_analyses), file = 'analysis/progress.log')
             self.setFollowOnTarget(queueAnalyses(self.analysis_list[1:],
                                                  self.paradigm_setup,
                                                  self.global_pathway,
                                                  self.parameters,
                                                  self.directory,
-                                                 last_report_list = report_list))
+                                                 last_report_list = report_list,
+                                                 run_analyses = self.run_analyses + 1,
+                                                 total_analyses = self.total_analyses))
         else:
             if self.parameters.report_directory != None:
                 self.setFollowOnTarget(makeReport(report_list,
@@ -1009,22 +1016,28 @@ class queueAnalyses(Target):
                                                   self.directory))
 
 class branchAnalyses(Target):
-    def __init__(self, analysis_list, paradigm_setup, global_pathway, parameters, directory):
+    def __init__(self, analysis_list, paradigm_setup, global_pathway, parameters, directory, run_analyses = None, total_analyses = None):
         Target.__init__(self, time=10000)
         self.analysis_list = analysis_list
         self.paradigm_setup = paradigm_setup
         self.global_pathway = global_pathway
         self.parameters = parameters
         self.directory = directory
+        self.run_analyses = run_analyses
+        self.total_analyses = total_analyses
     def run(self):
         os.chdir(self.directory)
         
         ## branch analyses
         report_list = []
+        if self.total_analyses is None:
+            self.run_analyses = 0
+            self.total_analyses = len(self.analysis_list)
         if not os.path.exists('analysis'):
             os.mkdir('analysis')
         for analysis in self.analysis_list:
             if not os.path.exists('analysis/%s' % (analysis.directory)):
+                logger('Running analysis on %s (%s/%s)\n' % (analysis.analysis_name, self.run_analyses + 1, self.total_analyses), file = 'analysis/progress.log')
                 os.mkdir('analysis/%s' % (analysis.directory))
                 report_list.append(analysis.directory)
                 self.addChildTarget(branchFolds(analysis,
@@ -1032,6 +1045,9 @@ class branchAnalyses(Target):
                                                 self.global_pathway,
                                                 self.parameters,
                                                 self.directory))
+            else:
+                logger('Already performed analysis on %s (%s/%s)\n' % (analysis.analysis_name, self.run_analyses + 1, self.total_analyses), file = 'analysis/progress.log')
+            self.run_analyses += 1
         if self.parameters.report_directory != None:
             self.setFollowOnTarget(makeReport(report_list,
                                               self.parameters.report_directory,
@@ -1183,6 +1199,7 @@ class selectNeighborhood(Target):
                 logger('Using trained model ...\n', file = 'progress.log')
                 selected_upstream = Pathway('%s/upstream_pathway.tab' % (model_path))
                 selected_downstream = Pathway('%s/upstream_pathway.tab' % (model_path))
+                selection_pass = True
         
         ## get upstream and downstream base neighborhoods per complex, then combine
         if (selected_upstream is None) and (selected_downstream is None):
@@ -1632,6 +1649,7 @@ class makeReport(Target):
         self.directory = directory
     def run(self):
         os.chdir(self.directory)
+        logger('... Done\n', file = 'analysis/progress.log')
         
         if not os.path.exists(self.report_directory):
             os.mkdir('%s' % (self.report_directory))
