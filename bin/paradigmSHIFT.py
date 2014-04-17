@@ -249,7 +249,7 @@ class Pathway:
                         continue
                     if intermediate == target:
                         complete_walk = current_walk + [intermediate]
-                        shortest_paths.append([(complete_walk[index], 
+                        shortest_paths.append([(complete_walk[index],
                                               self.interactions[complete_walk[index]][complete_walk[index + 1]],
                                               complete_walk[index + 1])
                                               for index in range(len(complete_walk) - 1)])
@@ -518,8 +518,8 @@ def getFullNeighborhood(focus_gene, global_pathway, max_distance = 2):
     group_index = globComplexes(focus_gene, global_pathway)
     group_pathways = {}
     for index in group_index:
-        group_pathways[index] = [deepcopy(searchUpstream(focus_gene, group_index[index], global_pathway, reversed_interactions)),
-                                 deepcopy(searchDownstream(focus_gene, group_index[index], global_pathway, reversed_interactions))]
+        group_pathways[index] = [deepcopy(searchUpstream(focus_gene, group_index[index], global_pathway, reversed_interactions, max_distance = max_distance)),
+                                 deepcopy(searchDownstream(focus_gene, group_index[index], global_pathway, reversed_interactions, max_distance = max_distance))]
     return(group_index, group_pathways)
 
 def getRelevantPaths(focus_gene, upstream_pathway, downstream_pathway, max_distance = 2):
@@ -1198,7 +1198,7 @@ class selectNeighborhood(Target):
             if (os.path.exists('%s/upstream_pathway.tab' % (model_path))) and (os.path.exists('%s/downstream_pathway.tab' % (model_path))):
                 logger('Using trained model ...\n', file = 'progress.log')
                 selected_upstream = Pathway('%s/upstream_pathway.tab' % (model_path))
-                selected_downstream = Pathway('%s/upstream_pathway.tab' % (model_path))
+                selected_downstream = Pathway('%s/downstream_pathway.tab' % (model_path))
                 selection_pass = True
         
         ## get upstream and downstream base neighborhoods per complex, then combine
@@ -1209,7 +1209,9 @@ class selectNeighborhood(Target):
             for index in group_pathways:
                 combined_upstream.appendPathway(group_pathways[index][0])
                 combined_downstream.appendPathway(group_pathways[index][1])
-        
+            combined_upstream.writeSPF('upstream_base.tab')
+            combined_downstream.writeSPF('downstream_base.tab')
+            
             ## identify all interaction paths relevant to the Paradigm-Shift task
             (upstream_path_map, downstream_path_map) = getRelevantPaths(self.analysis.focus_gene, combined_upstream, combined_downstream, max_distance = self.current_parameters[0])
         
@@ -1683,6 +1685,7 @@ def main():
     parser.add_option('-n', '--nulls', dest='nulls', default=30)
     parser.add_option('-b', '--batchsize', dest='batch_size', default=50)
     parser.add_option('-p', '--public', action='store_true', dest='paradigm_public', default=False)
+    parser.add_option('-i', '--pathway', dest='pathway_interactions', default=None)
     parser.add_option('-z', '--seed', dest='seed', default=None)
     options, args = parser.parse_args()
     logger('Using Batch System : %s\n' % (options.batchSystem))
