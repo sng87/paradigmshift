@@ -68,7 +68,7 @@ def readMAF(input_file):
 
 def formatSample(sample):
     """this function may need to be modified depending on the project"""
-    return(sample[0:16])
+    return(sample[0:12])
 
 def main():
     ## parse arguments

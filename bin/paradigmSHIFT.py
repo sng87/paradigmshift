@@ -16,8 +16,6 @@ from jobTree.scriptTree.stack import Stack
 
 ## default executables
 base_directory = os.path.dirname(os.path.abspath(__file__))
-# paradigm_executable = os.path.join(base_directory, 'paradigm')
-# circleplot_executable = os.path.join(base_directory, 'circlePlot.py')
 paradigm_executable = 'paradigm'
 circleplot_executable = 'circlePlot.py'
 
@@ -1687,6 +1685,7 @@ def main():
     parser.add_option('-p', '--public', action='store_true', dest='paradigm_public', default=False)
     parser.add_option('-i', '--pathway', dest='pathway_interactions', default=None)
     parser.add_option('-z', '--seed', dest='seed', default=None)
+    parser.add_option('-g', '--galaxy', action='store_true', dest='galaxy_run', default=False)
     options, args = parser.parse_args()
     logger('Using Batch System : %s\n' % (options.batchSystem))
     
@@ -1701,6 +1700,12 @@ def main():
     paradigm_directory = os.path.abspath(args[0])
     analysis_file = args[1]
     
+    ## set Galaxy Executables
+    global paradigm_executable, circleplot_executable
+    if options.galaxy_run:
+        paradigm_executable = os.path.join(base_directory, 'paradigm')
+        circleplot_executable = os.path.join(base_directory, 'circlePlot.py')
+
     ## set Paradigm files
     paradigm_setup = ParadigmSetup(paradigm_directory,
                                    options.include_samples,
