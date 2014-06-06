@@ -1209,6 +1209,8 @@ class selectNeighborhood(Target):
                 combined_downstream.appendPathway(group_pathways[index][1])
             combined_upstream.writeSPF('upstream_base.tab')
             combined_downstream.writeSPF('downstream_base.tab')
+            combined_upstream.writeSIF('upstream_base.sif')
+            combined_downstream.writeSIF('downstream_base.sif')
             
             ## identify all interaction paths relevant to the Paradigm-Shift task
             (upstream_path_map, downstream_path_map) = getRelevantPaths(self.analysis.focus_gene, combined_upstream, combined_downstream, max_distance = self.current_parameters[0])
