@@ -14,12 +14,11 @@ from optparse import OptionParser
 from jobTree.scriptTree.target import Target
 from jobTree.scriptTree.stack import Stack
 
-## default executables
+## default variables
 base_directory = os.path.dirname(os.path.abspath(__file__))
 paradigm_executable = 'paradigm'
 circleplot_executable = 'circlePlot.py'
 
-## default variables
 in_parallel = False     ## run events in parallel
 min_alterations = 5     ## minimum number of alterations for analysis to be considered
 
@@ -1684,10 +1683,10 @@ def main():
     parser.add_option('-f', '--features', dest='include_features', default=None)
     parser.add_option('-n', '--nulls', dest='nulls', default=30)
     parser.add_option('-b', '--batchsize', dest='batch_size', default=50)
-    parser.add_option('-p', '--public', action='store_true', dest='paradigm_public', default=False)
-    parser.add_option('-i', '--pathway', dest='pathway_interactions', default=None)
+    parser.add_option('-y', '--public', action='store_true', dest='paradigm_public', default=False)
+    parser.add_option('-p', '--pathway', dest='pathway_interactions', default=None)
     parser.add_option('-z', '--seed', dest='seed', default=None)
-    parser.add_option('-g', '--galaxy', action='store_true', dest='galaxy_run', default=False)
+    parser.add_option('-g', '--galaxy', dest='galaxy_run', action='store_true', default=False)
     options, args = parser.parse_args()
     logger('Using Batch System : %s\n' % (options.batchSystem))
     
