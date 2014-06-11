@@ -30,3 +30,6 @@ paradigm-scripts :
 
 clean :
 	rm -f init.sh init.csh
+	if [ -d 'example' ]; then \
+		cd example; make clean; \
+	fi

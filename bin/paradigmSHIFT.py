@@ -115,7 +115,7 @@ class Parameters:
         self.cross_validation = True
         self.cross_validation_two_sided = False
         self.separation_method = 'tt'
-        self.report_directory = 'html'
+        self.report_directory = 'report'
     def importConfig(self, config_file):
         f = open(config_file, 'r')
         for line in f:
@@ -1655,6 +1655,14 @@ class makeReport(Target):
         if not os.path.exists(self.report_directory):
             os.mkdir('%s' % (self.report_directory))
         
+        for analysis in self.report_list:
+            os.mkdir('%s/%s' % (self.report_directory, analysis))
+            os.system('cp analysis/%s/pshift.tab %s/%s' % (analysis, self.report_directory, analysis))
+            os.system('cp analysis/%s/significance.tab %s/%s' % (analysis, self.report_directory, analysis))
+            os.system('cp analysis/%s/*.sif %s/%s' % (analysis, self.report_directory, analysis))
+            os.system('cp -r analysis/%s/img %s/%s' % (analysis, self.report_directory, analysis))
+            os.system('cp analysis/%s/*.pdf %s/%s' % (analysis, self.report_directory, analysis))
+            
         ## cytoscape-web
         # for gene in self.includeFeatures:
         #     if os.path.exists('analysis/%s/sig.tab' % (gene)):
@@ -1692,7 +1700,7 @@ def main():
     
     if len(args) == 1:
         if args[0] == 'clean':
-            command = 'rm -rf .jobTree analysis html'
+            command = 'rm -rf .jobTree analysis'
             logger(command)
             os.system(command)
             sys.exit(0)
