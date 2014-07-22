@@ -174,7 +174,7 @@ class Alterations:
 
 class Pathway:
     """
-    Paradigm compatible pathway class [2014-3-28]
+    Paradigm compatible pathway class [2014-6-9]
     Dependencies: logger
     """
     def __init__(self, input, pid = None):
@@ -225,6 +225,15 @@ class Pathway:
                 for interaction in self.interactions[source][target].split(';'):
                     o.write('%s\t%s\t%s\n' % (source, interaction, target))
         o.close()
+    def networkx(self):
+        networkx_graph = networkx.MultiDiGraph()
+        for node in self.nodes:
+            networkx_graph.add_node(node, type = self.nodes[node])
+        for source in self.interactions:
+            for target in self.interactions[source]:
+                for interaction in self.interactions[source][target].split(';'):
+                    networkx_graph.add_edge(source, target, interaction = interaction)
+        return(networkx_graph)
     def reverse(self):
         reversed_interactions = {}
         for source in self.interactions:
@@ -518,7 +527,7 @@ def getFullNeighborhood(focus_genes, global_pathway, max_distance = 2):
     for focus_gene in focus_genes:
         group_index[focus_gene] = globComplexes(focus_gene, global_pathway)
         group_pathways[focus_gene] = {}
-        for index in group_index:
+        for index in group_index[focus_gene]:
             group_pathways[focus_gene][index] = [deepcopy(searchUpstream(focus_gene,
                                                                          group_index[focus_gene][index],
                                                                          global_pathway,
@@ -566,32 +575,6 @@ def getRelevantPaths(focus_genes, upstream_pathway, downstream_pathway, max_dist
                     downstream_path_map[node] += deepcopy(legal_paths)
     return(upstream_path_map, downstream_path_map)
 
-def computeFeatureScores(data_map, positive_samples, negative_samples, method = 'variance'):
-    def getScoreByVariance(data_frame, all_samples):
-        score_map = {}
-        for feature in data_frame.columns:
-            score_map[feature] = computeMean(list(data_frame[feature].loc[all_samples]), return_sd = True, sample_sd = True)[1]
-        return(score_map)
-    def getScoreByWelchsTT(data_frame, positive_samples, negative_samples):
-        score_map = {}
-        for feature in data_frame.columns:
-            score_map[feature] = computeWelchsT(list(data_frame[feature].loc[positive_samples]),
-                                                list(data_frame[feature].loc[negative_samples]),
-                                                alpha = 0.0,
-                                                return_df = False)
-        return(score_map)
-    
-    all_samples = list(set(positive_samples) | set(negative_samples))
-    score_map = {}
-    for attachment in data_map:
-        if method == 'variance':
-            score_map[attachment] = getScoreByVariance(data_map[attachment], all_samples)
-        elif method == 'tt':
-            score_map[attachment] = getScoreByWelchsTT(data_map[attachment], positive_samples, negative_samples)
-    data_frame = pandas.DataFrame(score_map)
-    data_frame.to_csv('feature.scores', sep = '\t', na_rep = 'NA')
-    return(score_map)
-
 def computeFeatureRanks(score_map):
     rank_map = {}
     for attachment in score_map:
@@ -610,9 +593,268 @@ def computeFeatureRanks(score_map):
             rank_map[attachment][feature] = float(index + 1)/len(ranked_features)
     return(rank_map)
 
-####
+def computeFeatureScores(data_map, positive_samples, negative_samples, upstream_pathway_map, downstream_pathway_map, method = 'variance'):
+    def getScoreByVariance(data_frame, all_samples):
+        score_map = {}
+        for feature in data_frame.columns:
+            score_map[feature] = computeMean(list(data_frame[feature].loc[all_samples]), return_sd = True, sample_sd = True)[1]
+        return(score_map)
+    def getScoreByWelchsTT(data_frame, positive_samples, negative_samples):
+        score_map = {}
+        for feature in data_frame.columns:
+            score_map[feature] = computeWelchsT(list(data_frame[feature].loc[positive_samples]),
+                                                list(data_frame[feature].loc[negative_samples]),
+                                                alpha = 0.0,
+                                                return_df = False)
+        return(score_map)
+    def getScoreByGelNet(data_frame, positive_samples, negative_samples, upstream_pathway_map, downstream_pathway_map, l1 = 0.95, l2 = 0.05):
+        """
+        Refactoring of https://github.com/ucscCancer/pathway_tools/blob/master/scripts/diffuse.py [613be7d5baad339e8ddc852be6e10baff0cf8f9c]
+        """
+        import networkx
+        from array import array
+        from numpy import dot, genfromtxt, identity
+        from scipy.sparse import coo_matrix
+        from scipy.sparse.linalg import expm
+        
+        class SciPYKernel:
+            def __init__(self):
+                self.laplacian = None
+                self.index2node = None
+                self.kernel = None
+                self.labels = None
+            def readKernel(self, kernel_file):
+                self.kernel = coo_matrix(genfromtxt(kernel_file, delimiter = '\t')[1:, 1:])
+                f = open(kernel_file, 'r')
+                self.labels = f.readline().rstrip().split('\t')[1:]
+                f.close()
+            def makeKernel(self, networkx_graph, diffusion_time = 0.1):
+                ## parse the network, build the graph laplacian
+                edges, nodes, node_out_degrees = self.parseGraph(networkx_graph)
+                num_nodes = len(nodes)
+                node_order = list(nodes)
+                index2node = {}
+                node2index = {}
+                for i in range(0, num_nodes):
+                    index2node[i] = node_order[i]
+                    node2index[node_order[i]] = i
+                ## construct the diagonals
+                row = array('i')
+                col = array('i')
+                data = array('f')
+                for i in range(0, num_nodes):
+                    ## diag entries: out degree
+                    degree = 0
+                    if index2node[i] in node_out_degrees:
+                        degree = node_out_degrees[index2node[i]]
+                    ## append to the end
+                    data.insert(len(data), degree)
+                    row.insert(len(row), i)
+                    col.insert(len(col), i)
+                ## add edges
+                for i in range(0, num_nodes):
+                    for j in range(0, num_nodes):
+                        if i == j:
+                            continue
+                        if (index2node[i], index2node[j]) not in edges:
+                            continue
+                        ## append index to i-th row, j-th column
+                        row.insert(len(row), i)
+                        col.insert(len(col), j)
+                        ## -1 for laplacian edges
+                        data.insert(len(data), -1)
+                ## graph laplacian
+                L = coo_matrix((data,(row, col)), shape=(num_nodes,num_nodes)).tocsc()
+                self.laplacian = L
+                self.index2node = index2node
+                self.kernel = expm(-1*diffusion_time*L)
+                self.labels = node_order
+            def printLaplacian(self):
+                cx = self.laplacian.tocoo()
+                for i,j,v in zip(cx.row, cx.col, cx.data):
+                    a = self.index2node[i]
+                    b = self.index2node[j]
+                    print '\t'.join([a,b,str(v)])
+            def parseGraph(self, networkx_graph):
+                edges = set()
+                nodes = set()
+                degrees = {}
+                for source in networkx_graph.edge:
+                    for target in networkx_graph.edge[source]:
+                        if (source, target) in edges:
+                            continue
+                        edges.add((source, target))
+                        edges.add((target, source))
+                        nodes.add(source)
+                        nodes.add(target)
+                        if source not in degrees:
+                            degrees[source] = 0
+                        if target not in degrees:
+                            degrees[target] = 0
+                        degrees[source] += 1
+                        degrees[target] += 1
+                return (edges, nodes, degrees)
+            def getRow(self, source):
+                cx = heat_kernel.kernel.tocoo()
+                edges = {}
+                for i, j, v in zip(cx.row, cx.col, cx.data):
+                    a = self.index2node[i]
+                    b = self.index2node[j]
+                    edges[(a, b)] = str(v)
+                heats = {}
+                for target in sorted(self.labels):
+                    if (source, target) in edges:
+                        heats[target] = float(edges[(source, target)])
+                    else:
+                        heats[target] = 0.0
+                return(heats)
+            def writeKernel(self, output_file):
+                o = open(output_file, 'w')
+                cx = self.kernel.tocoo()
+                edges = {}
+                for i, j, v in zip(cx.row, cx.col, cx.data):
+                    a = self.index2node[i]
+                    b = self.index2node[j]
+                    edges[(a, b)] = str(v)
+                ## iterate through rows
+                ## sort labels in alphabetical order
+                o.write('Key\t' + '\t'.join(sorted(self.labels)) + '\n')
+                for nodeA in sorted(self.labels):
+                    printstr = nodeA
+                    # through columns
+                    for nodeB in sorted(self.labels):
+                        if (nodeA, nodeB) in edges:
+                            printstr += '\t' + edges[(nodeA, nodeB)]	
+                        else:
+                            printstr += '\t0'
+                    o.write(printstr + '\n')
+                o.close()
+            def kernelMultiplyOne(self, vector):
+                array = []
+                ## loop over gene names in the network kernel: add the starting value if 
+                ## it's present in the supplied input vector
+                for label in self.labels:
+                    if label in vector:
+                        array.append(vector[label])
+                    else:
+                        array.append(0)
+                ## take the dot product
+                value = self.kernel*array
+                return_vec = {}
+                idx = 0
+                for label in self.labels:
+                    return_vec[label] = float(value[idx])
+                    idx += 1
+                return return_vec
+            @staticmethod
+            def getAngle(v1, v2):
+                arry1 = []
+                arry2 = []
+                for key in v1:
+                    arry1.append(float(v1[key]))
+                    arry2.append(float(v2[key]))
+                mag_1 = math.sqrt(dot(arry1,arry1))
+                mag_2 = math.sqrt(dot(arry2,arry2))
+                cos_theta = dot(arry1,arry2)/(mag_1*mag_2)
+                return math.acos(cos_theta)
+            def diffuse(self, vector, reverse=False):
+                ## reverse is not used: heat diffusion is undirected
+                diffused_vector = self.kernelMultiplyOne(vector)
+                return diffused_vector
+        
+        class_map = {}
+        for sample in positive_samples:
+            class_map[sample] = 1
+        for sample in negative_samples:
+            class_map[sample] = 0
+        class_vector = pandas.DataFrame(pandas.Series(class_map), columns = ['class'])
+        sample_intersection = list(set(class_vector.index) & set(data_frame.index))
+        sample_intersection.sort()
+        upstream_score_map = {}
+        for focus_gene in upstream_pathway_map:
+            heat_kernel = SciPYKernel()
+            heat_kernel.makeKernel(upstream_pathway_map[focus_gene].networkx())
+            heat_vector = pandas.DataFrame(pandas.Series(heat_kernel.getRow(focus_gene)), columns = ['heat'])
+            weight_vector = abs((heat_vector/max(heat_vector.icol(0))) - 1.0)**4
+            weight_vector.columns = ['weight']
+            feature_intersection = list(set(weight_vector.index) & set(data_frame.columns) - set([focus_gene]))
+            feature_intersection.sort()
+            penalty_matrix = pandas.DataFrame(identity(len(feature_intersection)))
+            penalty_matrix.columns = feature_intersection
+            penalty_matrix.index = feature_intersection
+            data_frame[feature_intersection].loc(sample_intersection).to_csv('data.X.matrix', sep = '\t', index_label = 'id')
+            class_vector.loc(sample_intersection).to_csv('class.y.vector', sep = '\t', index_label = 'id')
+            weight_vector.loc(feature_intersection).to_csv('weight.d.vector', sep = '\t', index_label = 'id')
+            penalty_matrix.to_csv('penalty.P.matrix', sep = '\t', index_label = 'id')
+            os.system('gelnet.R')
+            f = open('gelnet.w.vector', 'r')
+            for line in f:
+                if line.isspace():
+                    continue
+                pline = line.rstrip().split('\t')
+                if pline[0] not in upstream_score_map:
+                    upstream_score_map[pline[0]] = abs(float(pline[1]))
+                else:
+                    upstream_score_map[pline[0]] = max(upstream_score_map[pline[0]], abs(float(pline[1])))
+            f.close()
+        downstream_score_map = {}
+        for focus_gene in downstream_pathway_map:
+            heat_kernel = SciPYKernel()
+            heat_kernel.makeKernel(downstream_pathway_map[focus_gene].networkx())
+            heat_vector = pandas.DataFrame(pandas.Series(heat_kernel.getRow(focus_gene)), columns = ['heat'])
+            weight_vector = abs((heat_vector/max(heat_vector.icol(0))) - 1.0)**4
+            weight_vector.columns = ['weight']
+            feature_intersection = list(set(weight_vector.index) & set(data_frame.columns) - set([focus_gene]))
+            feature_intersection.sort()
+            penalty_matrix = pandas.DataFrame(identity(len(feature_intersection)))
+            penalty_matrix.columns = feature_intersection
+            penalty_matrix.index = feature_intersection
+            data_frame[feature_intersection].loc(sample_intersection).to_csv('data.X.matrix', sep = '\t', index_label = 'id')
+            class_vector.loc(sample_intersection).to_csv('class.y.vector', sep = '\t', index_label = 'id')
+            weight_vector.loc(feature_intersection).to_csv('weight.d.vector', sep = '\t', index_label = 'id')
+            penalty_matrix.to_csv('penalty.P.matrix', sep = '\t', index_label = 'id')
+            os.system('gelnet.R')
+            f = open('gelnet.w.vector', 'r')
+            for line in f:
+                if line.isspace():
+                    continue
+                pline = line.rstrip().split('\t')
+                if pline[0] not in downstream_score_map:
+                    downstream_score_map[pline[0]] = abs(float(pline[1]))
+                else:
+                    downstream_score_map[pline[0]] = max(downstream_score_map[pline[0]], abs(float(pline[1])))
+            f.close()
+        combined_score_map = {}
+        for feature in upstream_score_map:
+            if feature in downstream_score_map:
+                combined_score_map[feature] = 0.0
+            else:
+                combined_score_map[feature] = upstream_score_map[feature]
+        for feature in downstream_score_map:
+            if feature in upstream_score_map:
+                combined_score_map[feature] = 0.0
+            else:
+                combined_score_map[feature] = downstream_score_map[feature]
+        return(combined_score_map)
+    
+    all_samples = list(set(positive_samples) | set(negative_samples))
+    score_map = {}
+    for attachment in data_map:
+        if method == 'variance':
+            score_map[attachment] = getScoreByVariance(data_map[attachment], all_samples)
+        elif method == 'tt':
+            score_map[attachment] = getScoreByWelchsTT(data_map[attachment], positive_samples, negative_samples)
+        elif method == 'gelnet':
+            score_map[attachment] = getScoreByGelNet(data_map[attachment], positive_samples, negative_samples, upstream_pathway_map, downstream_pathway_map, l1 = 0.95, l2 = 0.05)
+    score_frame = pandas.DataFrame(score_map)
+    score_frame.to_csv('feature.scores', sep = '\t', na_rep = 'NA')
+    
+    if method in ['gelnet']:
+        return(score_map)
+    else:
+        return(computeFeatureRanks(score_map))
 
-def getSelectedNeighborhood(focus_node, focus_genes, data_map, positive_samples, negative_samples, upstream_path_map, downstream_path_map, upstream_pathway, downstream_pathway, threshold = 0.84, cost = 0.0, method = 'variance'):
+def getSelectedNeighborhood(focus_node, focus_genes, data_map, positive_samples, negative_samples, upstream_path_map, downstream_path_map, upstream_pathway_map, downstream_pathway_map, base_upstream_pathway, base_downstream_pathway, threshold = 0.84, cost = 0.0, method = 'variance'):
     def getUpstreamValue(feature, value_map):
         value_list = []
         if 'mrna' in value_map:
@@ -653,33 +895,33 @@ def getSelectedNeighborhood(focus_node, focus_genes, data_map, positive_samples,
             value_list.append(fval)
         return(max(value_list))
     
-    score_map = computeFeatureScores(data_map, positive_samples, negative_samples, method = method)
-    rank_map = computeFeatureRanks(score_map)
+    score_map = computeFeatureScores(data_map, positive_samples, negative_samples, upstream_pathway_map, downstream_pathway_map, method = method)
     logger('## upstream neighborhood\n', file = 'selection.log')
     selected_upstream_pathway = Pathway( ({}, {}) )
     for focus_gene in focus_genes:
-        selected_upstream_pathway.nodes[focus_gene] = upstream_pathway.nodes[focus_gene]
-    if len(focus_genes) > 0:
+        selected_upstream_pathway.nodes[focus_gene] = base_upstream_pathway.nodes[focus_gene]
+    if len(focus_genes) > 1:
         selected_upstream_pathway.nodes[focus_node] = 'abstract'
         for focus_gene in focus_genes:
+            selected_upstream_pathway.interactions[focus_gene] = {}
             selected_upstream_pathway.interactions[focus_gene][focus_node] = '-ap>'
     selected_upstream_features = []
     ranked_upstream_features = []
     for feature in upstream_path_map:
-        if getUpstreamValue(feature, rank_map) > 0:
+        if getUpstreamValue(feature, score_map) > 0:
             ranked_upstream_features.append(feature)
-    ranked_upstream_features.sort(lambda x, y: cmp(getUpstreamValue(y, rank_map), getUpstreamValue(x, rank_map)))
+    ranked_upstream_features.sort(lambda x, y: cmp(getUpstreamValue(y, score_map), getUpstreamValue(x, score_map)))
     if len(ranked_upstream_features) > 0:
-        while (len(selected_upstream_features) < 4) or (getUpstreamValue(ranked_upstream_features[0], rank_map) >= threshold + cost*len(selected_upstream_features)):
+        while (len(selected_upstream_features) < 4) or (getUpstreamValue(ranked_upstream_features[0], score_map) > threshold + cost*len(selected_upstream_features)):
             current_feature = ranked_upstream_features.pop(0)
-            logger('%s\t%s\t%s\t%s\n' % (current_feature, getUpstreamValue(current_feature, rank_map), len(selected_upstream_features), upstream_path_map[current_feature]), file = 'selection.log')
+            logger('%s\t%s\t%s\t%s\n' % (current_feature, getUpstreamValue(current_feature, score_map), len(selected_upstream_features), upstream_path_map[current_feature]), file = 'selection.log')
             selected_upstream_features.append(current_feature)
             for path in upstream_path_map[current_feature]:
                 for edge in path:
                     if edge[0] not in selected_upstream_pathway.nodes:
-                        selected_upstream_pathway.nodes[edge[0]] = upstream_pathway.nodes[edge[0]]
+                        selected_upstream_pathway.nodes[edge[0]] = base_upstream_pathway.nodes[edge[0]]
                     if edge[2] not in selected_upstream_pathway.nodes:
-                        selected_upstream_pathway.nodes[edge[2]] = upstream_pathway.nodes[edge[2]]
+                        selected_upstream_pathway.nodes[edge[2]] = base_upstream_pathway.nodes[edge[2]]
                     if edge[0] not in selected_upstream_pathway.interactions:
                         selected_upstream_pathway.interactions[edge[0]] = {}
                     selected_upstream_pathway.interactions[edge[0]][edge[2]] = edge[1]
@@ -688,28 +930,29 @@ def getSelectedNeighborhood(focus_node, focus_genes, data_map, positive_samples,
     logger('## downstream neighborhood\n', file = 'selection.log')
     selected_downstream_pathway = Pathway( ({}, {}) )
     for focus_gene in focus_genes:
-        selected_downstream_pathway.nodes[focus_gene] = downstream_pathway.nodes[focus_gene]
-    if len(focus_genes) > 0:
+        selected_downstream_pathway.nodes[focus_gene] = base_downstream_pathway.nodes[focus_gene]
+    if len(focus_genes) > 1:
         selected_downstream_pathway.nodes[focus_node] = 'abstract'
+        selected_downstream_pathway.interactions[focus_node] = {}
         for focus_gene in focus_genes:
             selected_downstream_pathway.interactions[focus_node][focus_gene] = '-ap>'
     selected_downstream_features = []
     ranked_downstream_features = []
     for feature in downstream_path_map:
-        if getDownstreamValue(feature, rank_map) > 0:
+        if getDownstreamValue(feature, score_map) > 0:
             ranked_downstream_features.append(feature)
-    ranked_downstream_features.sort(lambda x, y: cmp(getDownstreamValue(y, rank_map), getDownstreamValue(x, rank_map)))
+    ranked_downstream_features.sort(lambda x, y: cmp(getDownstreamValue(y, score_map), getDownstreamValue(x, score_map)))
     if len(ranked_downstream_features) > 0:
-        while (len(selected_downstream_features) < 4) or (getDownstreamValue(ranked_downstream_features[0], rank_map) >= threshold + cost*len(selected_downstream_features)):
+        while (len(selected_downstream_features) < 4) or (getDownstreamValue(ranked_downstream_features[0], score_map) > threshold + cost*len(selected_downstream_features)):
             current_feature = ranked_downstream_features.pop(0)
-            logger('%s\t%s\t%s\t%s\n' % (current_feature, getDownstreamValue(current_feature, rank_map), len(selected_downstream_features), downstream_path_map[current_feature]), file = 'selection.log')
+            logger('%s\t%s\t%s\t%s\n' % (current_feature, getDownstreamValue(current_feature, score_map), len(selected_downstream_features), downstream_path_map[current_feature]), file = 'selection.log')
             selected_downstream_features.append(current_feature)
             for path in downstream_path_map[current_feature]:
                 for edge in path:
                     if edge[0] not in selected_downstream_pathway.nodes:
-                        selected_downstream_pathway.nodes[edge[0]] = downstream_pathway.nodes[edge[0]]
+                        selected_downstream_pathway.nodes[edge[0]] = base_downstream_pathway.nodes[edge[0]]
                     if edge[2] not in selected_downstream_pathway.nodes:
-                        selected_downstream_pathway.nodes[edge[2]] = downstream_pathway.nodes[edge[2]]
+                        selected_downstream_pathway.nodes[edge[2]] = base_downstream_pathway.nodes[edge[2]]
                     if edge[0] not in selected_downstream_pathway.interactions:
                         selected_downstream_pathway.interactions[edge[0]] = {}
                     selected_downstream_pathway.interactions[edge[0]][edge[2]] = edge[1]
@@ -749,8 +992,7 @@ def generateData(focus_genes, upstream_features, downstream_features, allow_feat
     for null in range(1, nulls + 1):
         feature_pool = list((set(upstream_features) | set(downstream_features)) - set(focus_genes))
         permute_pool = list(set(allow_features) - set(feature_pool) - set(focus_genes))
-        for focus_gene in focus_genes:
-            permute_map = {focus_gene : focus_gene}
+        permute_map = {focus_gene : focus_gene for focus_gene in focus_genes}
         for permute in zip(feature_pool, random.sample(permute_pool, len(feature_pool))):
             permute_map[permute[0]] = permute[1]
         for file in data_files:
@@ -792,8 +1034,7 @@ def generateBatchedData(focus_genes, upstream_features, downstream_features, all
     for null in range(1, nulls + 1):
         feature_pool = list((set(upstream_features) | set(downstream_features)) - set(focus_genes))
         permute_pool = list(set(allow_features) - set(feature_pool) - set(focus_genes))
-        for focus_gene in focus_genes:
-            permute_map = {focus_gene : focus_gene}
+        permute_map = {focus_gene : focus_gene for focus_gene in focus_genes}
         for permute in zip(feature_pool, random.sample(permute_pool, len(feature_pool))):
             permute_map[permute[0]] = permute[1]
         for file in data_files:
@@ -1243,29 +1484,29 @@ class selectNeighborhood(Target):
             (group_index, group_pathways) = getFullNeighborhood(self.analysis.focus_genes,
                                                                 self.global_pathway,
                                                                 max_distance = self.current_parameters[0])
-            combined_upstream = {}
-            combined_downstream = {}
+            upstream_pathway_map = {}
+            downstream_pathway_map = {}
             for focus_gene in self.analysis.focus_genes:
-                combined_upstream[focus_gene] = Pathway( ({focus_genes : self.global_pathway.nodes[focus_gene]}, {}) )
-                combined_downstream[focus_gene] = Pathway( ({focus_gene : self.global_pathway.nodes[focus_gene]}, {}) )
+                upstream_pathway_map[focus_gene] = Pathway( ({focus_gene : self.global_pathway.nodes[focus_gene]}, {}) )
+                downstream_pathway_map[focus_gene] = Pathway( ({focus_gene : self.global_pathway.nodes[focus_gene]}, {}) )
                 for index in group_pathways[focus_gene]:
-                    combined_upstream[focus_gene].appendPathway(group_pathways[focus_gene][index][0])
-                    combined_downstream[focus_gene].appendPathway(group_pathways[focus_gene][index][1])
-                combined_upstream[focus_gene].writeSPF('upstream_base.%s.tab' % (focus_gene))
-                combined_downstream[focus_gene].writeSPF('downstream_base.%s.tab' % (focus_gene))
-                combined_upstream[focus_gene].writeSIF('upstream_base.%s.sif' % (focus_gene))
-                combined_downstream[focus_gene].writeSIF('downstream_base.%s.sif' % (focus_gene))
+                    upstream_pathway_map[focus_gene].appendPathway(group_pathways[focus_gene][index][0])
+                    downstream_pathway_map[focus_gene].appendPathway(group_pathways[focus_gene][index][1])
+                upstream_pathway_map[focus_gene].writeSPF('upstream_base.%s.tab' % (focus_gene))
+                downstream_pathway_map[focus_gene].writeSPF('downstream_base.%s.tab' % (focus_gene))
+                upstream_pathway_map[focus_gene].writeSIF('upstream_base.%s.sif' % (focus_gene))
+                downstream_pathway_map[focus_gene].writeSIF('downstream_base.%s.sif' % (focus_gene))
             
             ## identify all interaction paths relevant to the Paradigm-Shift task
-            (upstream_path_map, downstream_path_map) = getRelevantPaths(self.analysis.focus_genes,
-                                                                        combined_upstream,
-                                                                        combined_downstream,
-                                                                        max_distance = self.current_parameters[0])
-            all_combined_upstream = Pathway( ({}, {}) )
-            all_combined_downstream = Pathway( ({}, {}) )
+            base_upstream_pathway = Pathway( ({}, {}) )
+            base_downstream_pathway = Pathway( ({}, {}) )
             for focus_gene in self.analysis.focus_genes:
-                all_combined_upstream.appendPathway(combined_upstream[focus_gene])
-                all_combined_downstream.appendPathway(combined_downstream[focus_gene])
+                base_upstream_pathway.appendPathway(upstream_pathway_map[focus_gene])
+                base_downstream_pathway.appendPathway(downstream_pathway_map[focus_gene])
+            (upstream_path_map, downstream_path_map) = getRelevantPaths(self.analysis.focus_genes,
+                                                                        base_upstream_pathway,
+                                                                        base_downstream_pathway,
+                                                                        max_distance = self.current_parameters[0])
             
             ## score and select features
             data_map = {}
@@ -1282,8 +1523,10 @@ class selectNeighborhood(Target):
                                                    negative_samples,
                                                    upstream_path_map,
                                                    downstream_path_map,
-                                                   all_combined_upstream,
-                                                   all_combined_downstream,
+                                                   upstream_pathway_map,
+                                                   downstream_pathway_map,
+                                                   base_upstream_pathway,
+                                                   base_downstream_pathway,
                                                    threshold = self.current_parameters[1],
                                                    cost = self.current_parameters[2],
                                                    method = self.current_parameters[3])
@@ -1411,30 +1654,30 @@ class computeShifts(Target):
         downstream_ipls = readParadigm('paradigm/%s_downstream.fa' % (self.analysis.focus_node))[1]
         upstream_ipls.to_csv('upstream_paradigm.tab', sep = '\t')
         downstream_ipls.to_csv('downstream_paradigm.tab', sep = '\t')
-        normalized_upstream_ipls = normalizeDataFrame(upstream_ipls.loc[[self.analysis.focus_node]], include_samples = training_negative)
-        normalized_downstream_ipls = normalizeDataFrame(downstream_ipls.loc[[self.analysis.focus_node]], include_samples = training_negative)
+        # normalized_upstream_ipls = normalizeDataFrame(upstream_ipls.loc[[self.analysis.focus_node]], include_samples = training_negative)
+        # normalized_downstream_ipls = normalizeDataFrame(downstream_ipls.loc[[self.analysis.focus_node]], include_samples = training_negative)
         null_upstream_ipls = {}
         null_downstream_ipls = {}
-        normalized_null_upstream_ipls = {}
-        normalized_null_downstream_ipls = {}
+        # normalized_null_upstream_ipls = {}
+        # normalized_null_downstream_ipls = {}
         for null in range(1, self.paradigm_setup.nulls + 1):
             assert(os.path.exists('paradigm/N%s_%s_upstream.fa' % (null, self.analysis.focus_node)))
             assert(os.path.exists('paradigm/N%s_%s_downstream.fa' % (null, self.analysis.focus_node)))
             null_upstream_ipls[null] = readParadigm('paradigm/N%s_%s_upstream.fa' % (null, self.analysis.focus_node))[1]
             null_downstream_ipls[null] = readParadigm('paradigm/N%s_%s_downstream.fa' % (null, self.analysis.focus_node))[1]
-            normalized_null_upstream_ipls[null] = normalizeDataFrame(null_upstream_ipls[null].loc[[self.analysis.focus_node]], include_samples = training_negative)
-            normalized_null_downstream_ipls[null] = normalizeDataFrame(null_downstream_ipls[null].loc[[self.analysis.focus_node]], include_samples = training_negative)
+            # normalized_null_upstream_ipls[null] = normalizeDataFrame(null_upstream_ipls[null].loc[[self.analysis.focus_node]], include_samples = training_negative)
+            # normalized_null_downstream_ipls[null] = normalizeDataFrame(null_downstream_ipls[null].loc[[self.analysis.focus_node]], include_samples = training_negative)
             
         ## compute raw and normalized p-shifts
         raw_shifts = {}
-        normalized_shifts = {}
+        # normalized_shifts = {}
         for sample in self.paradigm_setup.samples:
             assert((sample in downstream_ipls.columns) and (sample in upstream_ipls.columns))
             raw_shifts[sample] = (downstream_ipls[sample][self.analysis.focus_node] - upstream_ipls[sample][self.analysis.focus_node])
-            normalized_shifts[sample] = (normalized_downstream_ipls[sample][self.analysis.focus_node] - normalized_upstream_ipls[sample][self.analysis.focus_node])
+            # normalized_shifts[sample] = (normalized_downstream_ipls[sample][self.analysis.focus_node] - normalized_upstream_ipls[sample][self.analysis.focus_node])
             for null in range(1, self.paradigm_setup.nulls + 1):
                 raw_shifts['null%s_%s' % (null, sample)] = (null_downstream_ipls[null][sample][self.analysis.focus_node] - null_upstream_ipls[null][sample][self.analysis.focus_node])
-                normalized_shifts['null%s_%s' % (null, sample)] = (normalized_null_downstream_ipls[null][sample][self.analysis.focus_node] - normalized_null_upstream_ipls[null][sample][self.analysis.focus_node])
+                # normalized_shifts['null%s_%s' % (null, sample)] = (normalized_null_downstream_ipls[null][sample][self.analysis.focus_node] - normalized_null_upstream_ipls[null][sample][self.analysis.focus_node])
         o = open('pshift.tab', 'w')
         o.write("> %s\tP-Shifts:Table\n" % (self.analysis.focus_node))
         o.write("# sample\tclass\tP-Shift\n")
@@ -1450,24 +1693,24 @@ class computeShifts(Target):
             if sample in training_negative + testing_negative:
                 o.write("%s\t%s\n" % (sample, raw_shifts[sample]))
         o.close()
-        o = open('normalized_pshift.tab', 'w')
-        o.write("> %s\tNormalized_P-Shifts:Table\n" % (self.analysis.focus_node))
-        o.write("# sample\tclass\tP-Shift\n")
-        for sample in self.paradigm_setup.samples:
-            if sample in training_positive + testing_positive:
-                o.write("%s\t+\t%s\n" % (sample, normalized_shifts[sample]))
-            else:
-                o.write("%s\t-\t%s\n" % (sample, normalized_shifts[sample]))
-        o.close()
+        # o = open('normalized_pshift.tab', 'w')
+        # o.write("> %s\tNormalized_P-Shifts:Table\n" % (self.analysis.focus_node))
+        # o.write("# sample\tclass\tP-Shift\n")
+        # for sample in self.paradigm_setup.samples:
+        #     if sample in training_positive + testing_positive:
+        #         o.write("%s\t+\t%s\n" % (sample, normalized_shifts[sample]))
+        #     else:
+        #         o.write("%s\t-\t%s\n" % (sample, normalized_shifts[sample]))
+        # o.close()
         raw_centered_shifts = {}
-        normalized_centered_shifts = {}
+        # normalized_centered_shifts = {}
         (raw_negative_mean, raw_negative_sd) = computeMean([raw_shifts[sample] for sample in training_negative], return_sd = True)
         (raw_positive_mean, raw_positive_sd) = computeMean([raw_shifts[sample] for sample in training_positive], return_sd = True)
-        (normalized_negative_mean, normalized_negative_sd) = computeMean([normalized_shifts[sample] for sample in training_negative], return_sd = True)
-        (normalized_positive_mean, normalized_positive_sd) = computeMean([normalized_shifts[sample] for sample in training_positive], return_sd = True)
+        # (normalized_negative_mean, normalized_negative_sd) = computeMean([normalized_shifts[sample] for sample in training_negative], return_sd = True)
+        # (normalized_positive_mean, normalized_positive_sd) = computeMean([normalized_shifts[sample] for sample in training_positive], return_sd = True)
         for sample in self.paradigm_setup.samples:
             raw_centered_shifts[sample] = (raw_shifts[sample] - raw_negative_mean)/raw_negative_sd
-            normalized_centered_shifts[sample] = (normalized_shifts[sample] - normalized_negative_mean)/normalized_negative_sd
+            # normalized_centered_shifts[sample] = (normalized_shifts[sample] - normalized_negative_mean)/normalized_negative_sd
         o = open('pshift.centered.tab', 'w')
         o.write("> %s\tP-Shifts:Table\n" % (self.analysis.focus_node))
         o.write("# sample\tclass\tP-Shift\n")
@@ -1477,15 +1720,15 @@ class computeShifts(Target):
             else:
                 o.write("%s\t-\t%s\n" % (sample, raw_centered_shifts[sample]))
         o.close()
-        o = open('normalized_pshift.centered.tab', 'w')
-        o.write("> %s\tNormalized_P-Shifts:Table\n" % (self.analysis.focus_node))
-        o.write("# sample\tclass\tP-Shift\n")
-        for sample in self.paradigm_setup.samples:
-            if sample in training_positive + testing_positive:
-                o.write("%s\t+\t%s\n" % (sample, normalized_centered_shifts[sample]))
-            else:
-                o.write("%s\t-\t%s\n" % (sample, normalized_centered_shifts[sample]))
-        o.close()
+        # o = open('normalized_pshift.centered.tab', 'w')
+        # o.write("> %s\tNormalized_P-Shifts:Table\n" % (self.analysis.focus_node))
+        # o.write("# sample\tclass\tP-Shift\n")
+        # for sample in self.paradigm_setup.samples:
+        #     if sample in training_positive + testing_positive:
+        #         o.write("%s\t+\t%s\n" % (sample, normalized_centered_shifts[sample]))
+        #     else:
+        #         o.write("%s\t-\t%s\n" % (sample, normalized_centered_shifts[sample]))
+        # o.close()
         
         ## compute auc from stats
         absolute_shifts = {}
@@ -1677,10 +1920,10 @@ class generateOutput(Target):
         os.system('cp param_%s/normalized_pshift.tab normalized_pshift.tab' % ('_'.join(self.best_parameters)))
 
         ## output m-separation and significance plots
-        os.system("mseparation.R %s param_%s/positive.scores param_%s/negative.scores" % (self.analysis.focus_node,
+        os.system('mseparation.R %s param_%s/positive.scores param_%s/negative.scores' % (self.analysis.focus_node,
                                                                                           '_'.join(self.best_parameters),
                                                                                           '_'.join(self.best_parameters)))
-        os.system("significance.R %s param_%s/real.scores param_%s/null.scores" % (self.analysis.focus_node,
+        os.system('significance.R %s param_%s/real.scores param_%s/null.scores' % (self.analysis.focus_node,
                                                                                           '_'.join(self.best_parameters),
                                                                                           '_'.join(self.best_parameters)))
         
@@ -1813,7 +2056,7 @@ def main():
                                   pline[2].split(','),
                                   negative_samples = pline[3].split(','),
                                   directory = os.getcwd().rstrip('/'))
-        if len(set(altered.focus_genes) & set(global_pathway.nodes)) > 0:
+        if len(set(altered.focus_genes) & set(global_pathway.nodes)) == len(altered.focus_genes):
             if include_features != None:
                 if len(set(altered.focus_genes) & set(include_features)) == 0:
                     continue
