@@ -9,6 +9,7 @@ import math, os, random, re, string, sys, types
 from copy import deepcopy
 
 import pandas
+import networkx
 
 from optparse import OptionParser
 from jobTree.scriptTree.target import Target
@@ -20,7 +21,7 @@ paradigm_executable = 'paradigm'
 circleplot_executable = 'circlePlot.py'
 
 in_parallel = False     ## run events in parallel
-min_alterations = 5     ## minimum number of alterations for analysis to be considered
+min_alterations = 20     ## minimum number of alterations for analysis to be considered
 
 ## ps classes
 class ParadigmSetup:
@@ -328,12 +329,13 @@ class Pathway:
                     subsetted_pathway.interactions[source][target] = self.interactions[source][target]
         return(subsetted_pathway)
     def appendPathway(self, append_pathway):
+        for node in append_pathway.nodes:
+            if node not in self.nodes:
+                self.nodes[node] = append_pathway.nodes[node]
         for source in append_pathway.interactions:
-            if source not in self.nodes:
-                self.nodes[source] = append_pathway.nodes[source]
+            assert(source in self.nodes)
             for target in append_pathway.interactions[source]:
-                if target not in self.nodes:
-                    self.nodes[target] = append_pathway.nodes[target]
+                assert(target in self.nodes)
                 if source not in self.interactions:
                     self.interactions[source] = {}
                 if target not in self.interactions[source]:
@@ -611,7 +613,6 @@ def computeFeatureScores(data_map, positive_samples, negative_samples, upstream_
         """
         Refactoring of https://github.com/ucscCancer/pathway_tools/blob/master/scripts/diffuse.py [613be7d5baad339e8ddc852be6e10baff0cf8f9c]
         """
-        import networkx
         from array import array
         from numpy import dot, genfromtxt, identity
         from scipy.sparse import coo_matrix
@@ -775,18 +776,18 @@ def computeFeatureScores(data_map, positive_samples, negative_samples, upstream_
             heat_kernel = SciPYKernel()
             heat_kernel.makeKernel(upstream_pathway_map[focus_gene].networkx())
             heat_vector = pandas.DataFrame(pandas.Series(heat_kernel.getRow(focus_gene)), columns = ['heat'])
-            weight_vector = abs((heat_vector/max(heat_vector.icol(0))) - 1.0)**4
+            weight_vector = ((heat_vector/max(heat_vector.icol(0))) - 1.0).abs()**8
             weight_vector.columns = ['weight']
             feature_intersection = list(set(weight_vector.index) & set(data_frame.columns) - set([focus_gene]))
             feature_intersection.sort()
             penalty_matrix = pandas.DataFrame(identity(len(feature_intersection)))
             penalty_matrix.columns = feature_intersection
             penalty_matrix.index = feature_intersection
-            data_frame[feature_intersection].loc(sample_intersection).to_csv('data.X.matrix', sep = '\t', index_label = 'id')
-            class_vector.loc(sample_intersection).to_csv('class.y.vector', sep = '\t', index_label = 'id')
-            weight_vector.loc(feature_intersection).to_csv('weight.d.vector', sep = '\t', index_label = 'id')
+            data_frame[feature_intersection].loc[sample_intersection].to_csv('data.X.matrix', sep = '\t', index_label = 'id', na_rep = 0)
+            class_vector.loc[sample_intersection].to_csv('class.y.vector', sep = '\t', index_label = 'id')
+            weight_vector.loc[feature_intersection].to_csv('weight.d.vector', sep = '\t', index_label = 'id')
             penalty_matrix.to_csv('penalty.P.matrix', sep = '\t', index_label = 'id')
-            os.system('gelnet.R')
+            os.system('Rscript ~/bin/paradigmshift/bin/gelnet.R')
             f = open('gelnet.w.vector', 'r')
             for line in f:
                 if line.isspace():
@@ -802,18 +803,18 @@ def computeFeatureScores(data_map, positive_samples, negative_samples, upstream_
             heat_kernel = SciPYKernel()
             heat_kernel.makeKernel(downstream_pathway_map[focus_gene].networkx())
             heat_vector = pandas.DataFrame(pandas.Series(heat_kernel.getRow(focus_gene)), columns = ['heat'])
-            weight_vector = abs((heat_vector/max(heat_vector.icol(0))) - 1.0)**4
+            weight_vector = ((heat_vector/max(heat_vector.icol(0))) - 1.0).abs()**8
             weight_vector.columns = ['weight']
             feature_intersection = list(set(weight_vector.index) & set(data_frame.columns) - set([focus_gene]))
             feature_intersection.sort()
             penalty_matrix = pandas.DataFrame(identity(len(feature_intersection)))
             penalty_matrix.columns = feature_intersection
             penalty_matrix.index = feature_intersection
-            data_frame[feature_intersection].loc(sample_intersection).to_csv('data.X.matrix', sep = '\t', index_label = 'id')
-            class_vector.loc(sample_intersection).to_csv('class.y.vector', sep = '\t', index_label = 'id')
-            weight_vector.loc(feature_intersection).to_csv('weight.d.vector', sep = '\t', index_label = 'id')
+            data_frame[feature_intersection].loc[sample_intersection].to_csv('data.X.matrix', sep = '\t', index_label = 'id', na_rep = 0)
+            class_vector.loc[sample_intersection].to_csv('class.y.vector', sep = '\t', index_label = 'id')
+            weight_vector.loc[feature_intersection].to_csv('weight.d.vector', sep = '\t', index_label = 'id')
             penalty_matrix.to_csv('penalty.P.matrix', sep = '\t', index_label = 'id')
-            os.system('gelnet.R')
+            os.system('Rscript ~/bin/paradigmshift/bin/gelnet.R')
             f = open('gelnet.w.vector', 'r')
             for line in f:
                 if line.isspace():
@@ -1541,12 +1542,56 @@ class selectNeighborhood(Target):
             upstream_features = list(set(selected_upstream.nodes.keys()) & set(self.paradigm_setup.features))
             downstream_features = list(set(selected_downstream.nodes.keys()) & set(self.paradigm_setup.features))
             if self.paradigm_setup.public:
-                generateBatchedData(self.analysis.focus_genes, upstream_features, downstream_features, self.paradigm_setup.features, self.paradigm_setup.samples, data_files, nulls = self.paradigm_setup.nulls, batch_size = self.paradigm_setup.batch_size, random_seed = self.parameters.random_seed + self.fold)
+                if self.fold == 0:
+                    generateBatchedData(self.analysis.focus_genes,
+                                        upstream_features,
+                                        downstream_features,
+                                        self.paradigm_setup.features,
+                                        self.paradigm_setup.samples,
+                                        data_files,
+                                        nulls = self.paradigm_setup.nulls,
+                                        batch_size = self.paradigm_setup.batch_size,
+                                        random_seed = self.parameters.random_seed + self.fold)
+                else:
+                    generateBatchedData(self.analysis.focus_genes,
+                                        upstream_features,
+                                        downstream_features,
+                                        self.paradigm_setup.features,
+                                        self.paradigm_setup.samples,
+                                        data_files,
+                                        nulls = 0,
+                                        batch_size = self.paradigm_setup.batch_size,
+                                        random_seed = self.parameters.random_seed + self.fold)
             else:
-                generateData(self.analysis.focus_genes, upstream_features, downstream_features, self.paradigm_setup.features, self.paradigm_setup.samples, data_files, nulls = self.paradigm_setup.nulls, random_seed = self.parameters.random_seed + self.fold)
+                if self.fold == 0:
+                    generateData(self.analysis.focus_genes,
+                                 upstream_features,
+                                 downstream_features,
+                                 self.paradigm_setup.features,
+                                 self.paradigm_setup.samples,
+                                 data_files,
+                                 nulls = self.paradigm_setup.nulls,
+                                 random_seed = self.parameters.random_seed + self.fold)
+                else:
+                    generateData(self.analysis.focus_genes,
+                                 upstream_features,
+                                 downstream_features,
+                                 self.paradigm_setup.features,
+                                 self.paradigm_setup.samples,
+                                 data_files,
+                                 nulls = 0,
+                                 random_seed = self.parameters.random_seed + self.fold)
             selected_upstream.writeSPF('upstream_pathway.tab')
             selected_downstream.writeSPF('downstream_pathway.tab')
-            self.addChildTarget(runParadigm(self.analysis, self.paradigm_setup, ps_directory))
+            if self.fold == 0:
+                self.addChildTarget(runParadigm(self.analysis,
+                                                self.paradigm_setup,
+                                                ps_directory))
+            else:
+                self.addChildTarget(runParadigm(self.analysis,
+                                                self.paradigm_setup,
+                                                ps_directory,
+                                                nulls = 0))
             self.setFollowOnTarget(computeShifts(self.fold,
                                                  self.analysis,
                                                  self.training_samples,
@@ -1556,16 +1601,19 @@ class selectNeighborhood(Target):
                                                  self.directory))
 
 class runParadigm(Target):
-    def __init__(self, analysis, paradigm_setup, directory):
+    def __init__(self, analysis, paradigm_setup, directory, nulls = None):
         Target.__init__(self, time=10000)
         self.analysis = analysis
         self.paradigm_setup = paradigm_setup
         self.directory = directory
+        if nulls is None:
+            self.nulls = self.paradigm_setup.nulls
+        else:
+            self.nulls = nulls
     def run(self):
         os.chdir(self.directory)
         os.mkdir('paradigm')
         logger('Running Paradigm inference ...\n', file = 'progress.log')
-        
         
         ## copy paradigm files
         os.system('cp %s .' % (self.paradigm_setup.config))
@@ -1579,7 +1627,7 @@ class runParadigm(Target):
         if batches == 0:
             self.addChildTarget(jtCmd('%s -p upstream_pathway.tab -c config.txt -b %s -o %s' % (paradigm_executable, 'data/up_', 'paradigm/%s_upstream.fa' % (self.analysis.focus_node)), self.directory, file = 'jobs.list'))
             self.addChildTarget(jtCmd('%s -p downstream_pathway.tab -c config.txt -b %s -o %s' % (paradigm_executable, 'data/down_', 'paradigm/%s_downstream.fa' % (self.analysis.focus_node)), self.directory, file = 'jobs.list'))
-            for null in range(1, self.paradigm_setup.nulls + 1):
+            for null in range(1, self.nulls + 1):
                 self.addChildTarget(jtCmd('%s -p upstream_pathway.tab -c config.txt -b %s -o %s' % (paradigm_executable, 'data/up_N%s_' % (null), 'paradigm/N%s_%s_upstream.fa' % (null, self.analysis.focus_node)), self.directory, file = 'jobs.list'))
                 self.addChildTarget(jtCmd('%s -p downstream_pathway.tab -c config.txt -b %s -o %s' % (paradigm_executable, 'data/down_N%s_' % (null), 'paradigm/N%s_%s_downstream.fa' % (null, self.analysis.focus_node)), self.directory, file = 'jobs.list'))
         elif self.paradigm_setup.public:
@@ -1587,7 +1635,7 @@ class runParadigm(Target):
             for b in range(batches):
                 self.addChildTarget(jtCmd('%s -p upstream_pathway.tab -c config.txt -b %s -o %s' % (paradigm_executable, 'data/up_b%s_%s_' % (b, batches), 'outputFiles/%s_upstream_b%s_%s.fa' % (self.analysis.focus_node, b, batches)), self.directory, file = 'jobs.list'))
                 self.addChildTarget(jtCmd('%s -p downstream_pathway.tab -c config.txt -b %s -o %s' % (paradigm_executable, 'data/down_b%s_%s_' % (b, batches), 'outputFiles/%s_downstream_b%s_%s.fa' % (self.analysis.focus_node, b, batches)), self.directory, file = 'jobs.list'))
-                for null in range(1, self.paradigm_setup.nulls + 1):
+                for null in range(1, self.nulls + 1):
                     self.addChildTarget(jtCmd('%s -p upstream_pathway.tab -c config.txt -b %s -o %s' % (paradigm_executable, 'data/up_N%s_b%s_%s_' % (null, b, batches), 'outputFiles/N%s_%s_upstream_b%s_%s.fa' % (null, self.analysis.focus_node, b, batches)), self.directory, file = 'jobs.list'))
                     self.addChildTarget(jtCmd('%s -p downstream_pathway.tab -c config.txt -b %s -o %s' % (paradigm_executable, 'data/down_N%s_b%s_%s_' % (null, b, batches), 'outputFiles/N%s_%s_downstream_b%s_%s.fa' % (null, self.analysis.focus_node, b, batches)), self.directory, file = 'jobs.list'))
         else:
@@ -1595,17 +1643,21 @@ class runParadigm(Target):
             for b in range(batches):
                 self.addChildTarget(jtCmd('%s -p upstream_pathway.tab -c config.txt -b %s -o %s -s %s,%s' % (paradigm_executable, 'data/up_', 'outputFiles/%s_upstream_b%s_%s.fa' % (self.analysis.focus_node, b, batches), b, batches), self.directory, file = 'jobs.list'))
                 self.addChildTarget(jtCmd('%s -p downstream_pathway.tab -c config.txt -b %s -o %s -s %s,%s' % (paradigm_executable, 'data/down_', 'outputFiles/%s_downstream_b%s_%s.fa' % (self.analysis.focus_node, b, batches), b, batches), self.directory, file = 'jobs.list'))
-                for null in range(1, self.paradigm_setup.nulls + 1):
+                for null in range(1, self.nulls + 1):
                     self.addChildTarget(jtCmd('%s -p upstream_pathway.tab -c config.txt -b %s -o %s -s %s,%s' % (paradigm_executable, 'data/up_N%s_' % (null), 'outputFiles/N%s_%s_upstream_b%s_%s.fa' % (null, self.analysis.focus_node, b, batches), b, batches), self.directory, file = 'jobs.list'))
                     self.addChildTarget(jtCmd('%s -p downstream_pathway.tab -c config.txt -b %s -o %s -s %s,%s' % (paradigm_executable, 'data/down_N%s_' % (null), 'outputFiles/N%s_%s_downstream_b%s_%s.fa' % (null, self.analysis.focus_node, b, batches), b, batches), self.directory, file = 'jobs.list'))
-        self.setFollowOnTarget(collectParadigm(self.analysis, self.paradigm_setup, self.directory))
+        self.setFollowOnTarget(collectParadigm(self.analysis, self.paradigm_setup, self.directory, nulls = self.nulls))
 
 class collectParadigm(Target):
-    def __init__(self, analysis, paradigm_setup, directory):
+    def __init__(self, analysis, paradigm_setup, directory, nulls = None):
         Target.__init__(self, time=10000)
         self.analysis = analysis
         self.paradigm_setup = paradigm_setup
         self.directory = directory
+        if nulls is None:
+            self.nulls = self.paradigm_setup.nulls
+        else:
+            self.nulls = nulls
     def run(self):
         os.chdir(self.directory)
         
@@ -1613,7 +1665,7 @@ class collectParadigm(Target):
         for b in range(batches):
             os.system('cat outputFiles/%s_upstream_b%s_%s.fa >> paradigm/%s_upstream.fa' % (self.analysis.focus_node, b, batches, self.analysis.focus_node))
             os.system('cat outputFiles/%s_downstream_b%s_%s.fa >> paradigm/%s_downstream.fa' % (self.analysis.focus_node, b, batches, self.analysis.focus_node))
-            for null in range(1, self.paradigm_setup.nulls + 1):
+            for null in range(1, self.nulls + 1):
                 os.system('cat outputFiles/N%s_%s_upstream_b%s_%s.fa >> paradigm/N%s_%s_upstream.fa' % (null, self.analysis.focus_node, b, batches, null, self.analysis.focus_node))
                 os.system('cat outputFiles/N%s_%s_downstream_b%s_%s.fa >> paradigm/N%s_%s_downstream.fa' % (null, self.analysis.focus_node, b, batches, null, self.analysis.focus_node))
         if os.path.exists('outputFiles'):
@@ -1626,6 +1678,10 @@ class computeShifts(Target):
         self.analysis = analysis
         self.training_samples = training_samples
         self.paradigm_setup = paradigm_setup
+        if self.fold == 0:
+            self.nulls = self.paradigm_setup.nulls
+        else:
+            self.nulls = 0
         self.current_parameters = current_parameters
         self.parameters = parameters
         self.directory = directory
@@ -1660,7 +1716,7 @@ class computeShifts(Target):
         null_downstream_ipls = {}
         # normalized_null_upstream_ipls = {}
         # normalized_null_downstream_ipls = {}
-        for null in range(1, self.paradigm_setup.nulls + 1):
+        for null in range(1, self.nulls + 1):
             assert(os.path.exists('paradigm/N%s_%s_upstream.fa' % (null, self.analysis.focus_node)))
             assert(os.path.exists('paradigm/N%s_%s_downstream.fa' % (null, self.analysis.focus_node)))
             null_upstream_ipls[null] = readParadigm('paradigm/N%s_%s_upstream.fa' % (null, self.analysis.focus_node))[1]
@@ -1675,7 +1731,7 @@ class computeShifts(Target):
             assert((sample in downstream_ipls.columns) and (sample in upstream_ipls.columns))
             raw_shifts[sample] = (downstream_ipls[sample][self.analysis.focus_node] - upstream_ipls[sample][self.analysis.focus_node])
             # normalized_shifts[sample] = (normalized_downstream_ipls[sample][self.analysis.focus_node] - normalized_upstream_ipls[sample][self.analysis.focus_node])
-            for null in range(1, self.paradigm_setup.nulls + 1):
+            for null in range(1, self.nulls + 1):
                 raw_shifts['null%s_%s' % (null, sample)] = (null_downstream_ipls[null][sample][self.analysis.focus_node] - null_upstream_ipls[null][sample][self.analysis.focus_node])
                 # normalized_shifts['null%s_%s' % (null, sample)] = (normalized_null_downstream_ipls[null][sample][self.analysis.focus_node] - normalized_null_upstream_ipls[null][sample][self.analysis.focus_node])
         o = open('pshift.tab', 'w')
@@ -1779,7 +1835,7 @@ class computeShifts(Target):
                                                         training_negative,
                                                         raw_shifts,
                                                         method = self.parameters.separation_method)
-            for null in range(1, self.paradigm_setup.nulls + 1):
+            for null in range(1, self.nulls + 1):
                 mseparation_map['null%s' % (null)] = computeSeparation(['null%s_%s' % (null, sample) for sample in training_positive],
                                                                        ['null%s_%s' % (null, sample) for sample in training_negative],
                                                                        raw_shifts,
@@ -1788,10 +1844,10 @@ class computeShifts(Target):
             o.write('%s\n' % (mseparation_map['real']))
             o.close()
             o = open('null.scores', 'w')
-            o.write('%s\n' % ('\n'.join([str(mseparation_map['null%s' % (null)]) for null in range(1, self.paradigm_setup.nulls + 1)])))
+            o.write('%s\n' % ('\n'.join([str(mseparation_map['null%s' % (null)]) for null in range(1, self.nulls + 1)])))
             o.close()
             real_scores = [mseparation_map['real']]
-            null_scores = [mseparation_map['null%s' % (null)] for null in range(1, self.paradigm_setup.nulls + 1)]
+            null_scores = [mseparation_map['null%s' % (null)] for null in range(1, self.nulls + 1)]
             (null_mean, null_sd) = computeMean(null_scores, return_sd = True)
             significance_score = (real_scores[0] - null_mean)/(null_sd + self.alpha)
             o = open('significance.tab', 'w')
