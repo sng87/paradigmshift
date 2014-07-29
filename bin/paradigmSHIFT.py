@@ -1723,32 +1723,33 @@ class computeShifts(Target):
             null_downstream_ipls[null] = readParadigm('paradigm/N%s_%s_downstream.fa' % (null, self.analysis.focus_node))[1]
             # normalized_null_upstream_ipls[null] = normalizeDataFrame(null_upstream_ipls[null].loc[[self.analysis.focus_node]], include_samples = training_negative)
             # normalized_null_downstream_ipls[null] = normalizeDataFrame(null_downstream_ipls[null].loc[[self.analysis.focus_node]], include_samples = training_negative)
-            
+        
         ## compute raw and normalized p-shifts
-        raw_shifts = {}
-        # normalized_shifts = {}
+        raw_shifts = {'real' : {}}
+        for null in range(1, self.nulls + 1):
+            raw_shifts['null%s' % (null)] = {}
         for sample in self.paradigm_setup.samples:
             assert((sample in downstream_ipls.columns) and (sample in upstream_ipls.columns))
-            raw_shifts[sample] = (downstream_ipls[sample][self.analysis.focus_node] - upstream_ipls[sample][self.analysis.focus_node])
-            # normalized_shifts[sample] = (normalized_downstream_ipls[sample][self.analysis.focus_node] - normalized_upstream_ipls[sample][self.analysis.focus_node])
+            raw_shifts['real'][sample] = (downstream_ipls[sample][self.analysis.focus_node] - upstream_ipls[sample][self.analysis.focus_node])
             for null in range(1, self.nulls + 1):
-                raw_shifts['null%s_%s' % (null, sample)] = (null_downstream_ipls[null][sample][self.analysis.focus_node] - null_upstream_ipls[null][sample][self.analysis.focus_node])
-                # normalized_shifts['null%s_%s' % (null, sample)] = (normalized_null_downstream_ipls[null][sample][self.analysis.focus_node] - normalized_null_upstream_ipls[null][sample][self.analysis.focus_node])
+                raw_shifts['null%s' % (null)][sample] = (null_downstream_ipls[null][sample][self.analysis.focus_node] - null_upstream_ipls[null][sample][self.analysis.focus_node])
+        pandas.DataFrame(raw_shifts).to_csv('all_shifts.tab', sep = '\t', index_label = 'id')
         o = open('pshift.tab', 'w')
         o.write("> %s\tP-Shifts:Table\n" % (self.analysis.focus_node))
         o.write("# sample\tclass\tP-Shift\n")
         for sample in self.paradigm_setup.samples:
             if sample in training_positive + testing_positive:
-                o.write("%s\t+\t%s\n" % (sample, raw_shifts[sample]))
+                o.write("%s\t+\t%s\n" % (sample, raw_shifts['real'][sample]))
             else:
-                o.write("%s\t-\t%s\n" % (sample, raw_shifts[sample]))
+                o.write("%s\t-\t%s\n" % (sample, raw_shifts['real'][sample]))
         o.close()
         o = open('wildtype_shifts.tab', 'w')
         o.write("sample\tP-Shift\n")
         for sample in self.paradigm_setup.samples:
             if sample in training_negative + testing_negative:
-                o.write("%s\t%s\n" % (sample, raw_shifts[sample]))
+                o.write("%s\t%s\n" % (sample, raw_shifts['real'][sample]))
         o.close()
+        #### output sample x real, nulls matrix
         # o = open('normalized_pshift.tab', 'w')
         # o.write("> %s\tNormalized_P-Shifts:Table\n" % (self.analysis.focus_node))
         # o.write("# sample\tclass\tP-Shift\n")
@@ -1760,12 +1761,12 @@ class computeShifts(Target):
         # o.close()
         raw_centered_shifts = {}
         # normalized_centered_shifts = {}
-        (raw_negative_mean, raw_negative_sd) = computeMean([raw_shifts[sample] for sample in training_negative], return_sd = True)
-        (raw_positive_mean, raw_positive_sd) = computeMean([raw_shifts[sample] for sample in training_positive], return_sd = True)
+        (raw_negative_mean, raw_negative_sd) = computeMean([raw_shifts['real'][sample] for sample in training_negative], return_sd = True)
+        (raw_positive_mean, raw_positive_sd) = computeMean([raw_shifts['real'][sample] for sample in training_positive], return_sd = True)
         # (normalized_negative_mean, normalized_negative_sd) = computeMean([normalized_shifts[sample] for sample in training_negative], return_sd = True)
         # (normalized_positive_mean, normalized_positive_sd) = computeMean([normalized_shifts[sample] for sample in training_positive], return_sd = True)
         for sample in self.paradigm_setup.samples:
-            raw_centered_shifts[sample] = (raw_shifts[sample] - raw_negative_mean)/raw_negative_sd
+            raw_centered_shifts[sample] = (raw_shifts['real'][sample] - raw_negative_mean)/raw_negative_sd
             # normalized_centered_shifts[sample] = (normalized_shifts[sample] - normalized_negative_mean)/normalized_negative_sd
         o = open('pshift.centered.tab', 'w')
         o.write("> %s\tP-Shifts:Table\n" % (self.analysis.focus_node))
@@ -1801,10 +1802,10 @@ class computeShifts(Target):
             training_auc = computeAUC(training_samples_sorted, absolute_shifts, classification_map)[0]
         else:
             if raw_positive_mean >= raw_negative_mean:
-                training_samples_sorted.sort(lambda x, y: cmp(raw_shifts[y], raw_shifts[x]))
+                training_samples_sorted.sort(lambda x, y: cmp(raw_shifts['real'][y], raw_shifts['real'][x]))
             elif raw_positive_mean < raw_negative_mean:
-                training_samples_sorted.sort(lambda x, y: cmp(raw_shifts[x], raw_shifts[y]))
-            training_auc = computeAUC(training_samples_sorted, raw_shifts, classification_map)[0]
+                training_samples_sorted.sort(lambda x, y: cmp(raw_shifts['real'][x], raw_shifts['real'][y]))
+            training_auc = computeAUC(training_samples_sorted, raw_shifts['real'], classification_map)[0]
         if self.fold != 0:
             testing_samples_sorted = deepcopy(testing_all)
             if self.parameters.cross_validation_two_sided:
@@ -1812,10 +1813,10 @@ class computeShifts(Target):
                 testing_auc = computeAUC(testing_samples_sorted, absolute_shifts, classification_map)[0]
             else:
                 if raw_positive_mean >= raw_negative_mean:
-                    testing_samples_sorted.sort(lambda x, y: cmp(raw_shifts[y], raw_shifts[x]))
+                    testing_samples_sorted.sort(lambda x, y: cmp(raw_shifts['real'][y], raw_shifts['real'][x]))
                 elif raw_positive_mean < raw_negative_mean:
-                    testing_samples_sorted.sort(lambda x, y: cmp(raw_shifts[x], raw_shifts[y])) 
-                testing_auc = computeAUC(testing_samples_sorted, raw_shifts, classification_map)[0]
+                    testing_samples_sorted.sort(lambda x, y: cmp(raw_shifts['real'][x], raw_shifts['real'][y])) 
+                testing_auc = computeAUC(testing_samples_sorted, raw_shifts['real'], classification_map)[0]
         else:
             testing_auc = '---'
         o = open('auc.tab', 'w')
@@ -1825,20 +1826,20 @@ class computeShifts(Target):
         ## compute m-separation and significance
         if self.fold == 0:
             o = open('positive.scores', 'w')
-            o.write('%s\n' % ('\n'.join([str(raw_shifts[sample]) for sample in training_positive])))
+            o.write('%s\n' % ('\n'.join([str(raw_shifts['real'][sample]) for sample in training_positive])))
             o.close()
             o = open('negative.scores', 'w')
-            o.write('%s\n' % ('\n'.join([str(raw_shifts[sample]) for sample in training_negative])))
+            o.write('%s\n' % ('\n'.join([str(raw_shifts['real'][sample]) for sample in training_negative])))
             o.close()
             mseparation_map = {}
             mseparation_map['real'] = computeSeparation(training_positive,
                                                         training_negative,
-                                                        raw_shifts,
+                                                        raw_shifts['real'],
                                                         method = self.parameters.separation_method)
             for null in range(1, self.nulls + 1):
-                mseparation_map['null%s' % (null)] = computeSeparation(['null%s_%s' % (null, sample) for sample in training_positive],
-                                                                       ['null%s_%s' % (null, sample) for sample in training_negative],
-                                                                       raw_shifts,
+                mseparation_map['null%s' % (null)] = computeSeparation(training_positive,
+                                                                       training_negative,
+                                                                       raw_shifts['null%s' % (null)],
                                                                        method = self.parameters.separation_method)
             o = open('real.scores', 'w')
             o.write('%s\n' % (mseparation_map['real']))
@@ -1900,7 +1901,7 @@ class computeShifts(Target):
                 o.write('\t%s' % (sample))
             o.write('\n*')
             for sample in self.paradigm_setup.samples:
-                o.write('\t%s' % (raw_shifts[sample]))
+                o.write('\t%s' % (raw_shifts['real'][sample]))
             o.write('\n')
             o.close()
             o = open('color.map', 'w')

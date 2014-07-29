@@ -4,8 +4,8 @@ X = as.matrix(read.table('data.X.matrix', header = TRUE, row.names = 1))
 y = read.table('class.y.vector', header = TRUE, row.names = 1)$class
 d = read.table('weight.d.vector', header = TRUE, row.names = 1)$weight
 P = as.matrix(read.table('penalty.P.matrix', header = TRUE, row.names = 1))
-l1 = 0.05
-l2 = 0.95
+l1 = 0.05 # try sweeping these parameters
+l2 = 1.0
 
 
 ## Constructs a logistic regression GELNET
