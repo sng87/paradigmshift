@@ -451,6 +451,20 @@ def generateBatchedData(focus_genes, upstream_features, downstream_features, all
                 permute_data_frame .to_csv('data/down_N%s_b%s_%s_%s' % (null, b, batches, file.split('/')[-1]), sep = '\t', na_rep = 'NA', index_label = 'samples')
 
 ## jt classes
+class jtCmd(Target):
+    def __init__(self, command, directory, file = None):
+        Target.__init__(self, time=1000)
+        self.command = command
+        self.directory = directory
+        self.file = file
+    def run(self):
+        os.chdir(self.directory)
+        if self.file:
+            o = open(self.file, 'a')
+            o.write('%s\n' % (self.command))
+            o.close()
+        os.system(self.command)
+
 class queueModels(Target):
     def __init__(self, model_list, paradigm_setup, directory):
         Target.__init__(self, time=10000)
