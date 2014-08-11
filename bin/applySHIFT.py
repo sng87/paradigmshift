@@ -354,6 +354,32 @@ def readList(input_file, header = False):
     f.close()
     return(input_list)
 
+def readParadigm(input_file, include_features = None):
+    """
+    Read in a Paradigm format output file [2014-3-10]
+    """
+    likelihood_map = {}
+    ipl_map = {}
+    f = open(input_file, 'r')
+    for line in f:
+        if line.isspace():
+            continue
+        if line.startswith(">"):
+            pline = re.split("[= ]", line.rstrip())
+            sample = pline[1]
+            likelihood_map[sample] = float(pline[3])
+            ipl_map[sample] = {}
+        else:
+            pline = line.rstrip().split('\t')
+            feature = pline[0]
+            if include_features != None:
+                if feature not in include_features:
+                    continue
+            ipl_map[sample][feature] = float(pline[1])
+    f.close()
+    ipl_data = pandas.DataFrame(ipl_map)
+    return(likelihood_map, ipl_data)
+
 def getBatchCount(cohort_size, batch_size = 15):
     """
     Batching function for public Paradigm executable [Paradigm-Shift specific]
