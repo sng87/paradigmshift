@@ -3,7 +3,7 @@
 paradigmSHIFT.py
 
 Author: Sam Ng
-Last Updated: 2014-03-11
+Last Updated: 2014-08-04
 """
 import math, os, random, re, string, sys, types
 from copy import deepcopy
@@ -29,7 +29,7 @@ class ParadigmSetup:
     Stores relevant information for preparing a Paradigm run [Paradigm-Shift specific]
     Dependencies: logger, returnColumns, returnRows, readList
     """
-    def __init__(self, directory, include_samples, nulls = 30, batch_size = 50, public = False):
+    def __init__(self, directory, include_samples = None, nulls = 30, batch_size = 50, public = False):
         self.directory = directory.rstrip('/')
         self.nulls = nulls
         self.batch_size = batch_size
@@ -1495,8 +1495,8 @@ class selectNeighborhood(Target):
                     downstream_pathway_map[focus_gene].appendPathway(group_pathways[focus_gene][index][1])
                 upstream_pathway_map[focus_gene].writeSPF('upstream_base.%s.tab' % (focus_gene))
                 downstream_pathway_map[focus_gene].writeSPF('downstream_base.%s.tab' % (focus_gene))
-                upstream_pathway_map[focus_gene].writeSIF('upstream_base.%s.sif' % (focus_gene))
-                downstream_pathway_map[focus_gene].writeSIF('downstream_base.%s.sif' % (focus_gene))
+                # upstream_pathway_map[focus_gene].writeSIF('upstream_base.%s.sif' % (focus_gene))
+                # downstream_pathway_map[focus_gene].writeSIF('downstream_base.%s.sif' % (focus_gene))
             
             ## identify all interaction paths relevant to the Paradigm-Shift task
             base_upstream_pathway = Pathway( ({}, {}) )
@@ -2033,7 +2033,7 @@ class makeReport(Target):
         #                                      (','.join(tableFiles), gene, self.reportDir))
         #         system('cp analysis/%s/pshift* %s' % (gene, self.reportDir))
 
-def main():
+def ps_main():
     ## check for fresh run
     if os.path.exists('.jobTree'):
         logger('WARNING: .jobTree directory found, remove it first to start a fresh run\n')
@@ -2073,7 +2073,7 @@ def main():
 
     ## set Paradigm files
     paradigm_setup = ParadigmSetup(paradigm_directory,
-                                   options.include_samples,
+                                   include_samples = options.include_samples,
                                    nulls = int(options.nulls),
                                    batch_size = int(options.batch_size),
                                    public = options.paradigm_public)
@@ -2149,4 +2149,4 @@ def main():
 
 if __name__ == '__main__':
     from paradigmSHIFT import *
-    main()
+    ps_main()
