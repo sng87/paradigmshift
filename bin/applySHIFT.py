@@ -647,6 +647,7 @@ class computeMShifts(Target):
     def run(self):
         ps_directory = '%s/analysis/%s' % (self.directory, self.model.directory)
         os.chdir(ps_directory)
+        logger('Computing P-Shifts ...\n', file = 'progress.log')
         
         ## read in Paradigm inferences
         assert(os.path.exists('paradigm/%s_upstream.fa' % (self.model.focus_node)))
@@ -667,9 +668,9 @@ class computeMShifts(Target):
             raw_shifts['null%s' % (null)] = {}
         for sample in self.paradigm_setup.samples:
             assert((sample in downstream_ipls.columns) and (sample in upstream_ipls.columns))
-            raw_shifts['real'][sample] = (downstream_ipls[sample][self.model.focus_node] - upstream_ipls[sample][self.model.focus_node])
+            raw_shifts['real'][sample] = (downstream_ipls[sample].loc[self.model.focus_node] - upstream_ipls[sample].loc[self.model.focus_node])
             for null in range(1, self.paradigm_setup.nulls + 1):
-                raw_shifts['null%s' % (null)][sample] = (null_downstream_ipls[null][sample][self.model.focus_node] - null_upstream_ipls[null][sample][self.model.focus_node])
+                raw_shifts['null%s' % (null)][sample] = (null_downstream_ipls[null][sample].loc[self.model.focus_node] - null_upstream_ipls[null][sample].loc[self.model.focus_node])
         pandas.DataFrame(raw_shifts).to_csv('all_shifts.tab', sep = '\t', index_label = 'id')
 
 def as_main():
