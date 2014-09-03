@@ -115,6 +115,7 @@ class Parameters:
         self.model_directory = None
         self.cross_validation = True
         self.cross_validation_two_sided = False
+        self.cross_validation_threshold = 0.55
         self.separation_method = 'tt'
         self.report_directory = 'report'
     def importConfig(self, config_file):
@@ -1372,6 +1373,7 @@ class branchFolds(Target):
                                                          self.directory))
         
         ## run final
+        os.mkdir('final')
         self.setFollowOnTarget(branchParameters(0,
                                                 self.analysis,
                                                 self.paradigm_setup.samples,
@@ -1392,7 +1394,7 @@ class branchParameters(Target):
         self.directory = directory
     def run(self):
         if self.fold == 0:
-            ps_directory = '%s/analysis/%s' % (self.directory, self.analysis.directory)
+            ps_directory = '%s/analysis/%s/final' % (self.directory, self.analysis.directory)
             os.chdir(ps_directory)
             logger('Constructing final model ...\n', file = 'progress.log')
         else:
@@ -1403,6 +1405,7 @@ class branchParameters(Target):
         if self.fold == 0:
             auc_list = []
             auc_lines = []
+            auc_average = None
             for round in range(1, self.parameters.n_rounds + 1):
                 for fold in range(1, self.parameters.m_folds + 1):
                     fold_index = (round - 1)*self.parameters.m_folds + fold
@@ -1415,12 +1418,18 @@ class branchParameters(Target):
                         (auc_train, auc_test, auc_params) = ('---', '---', '---')
                     auc_list.append(auc_test)
                     auc_lines.append('%s\t%s\t%s\t%s' % (fold_index, auc_train, auc_test, auc_params))
+            auc_average = computeMean(auc_list)
             o = open('average_auc.tab', 'w')
-            o.write('> %s\tMean(AUC) = %s\n' % (self.analysis.analysis_name, computeMean(auc_list)))
+            o.write('> %s\tMean(AUC) = %s\n' % (self.analysis.analysis_name, auc_average))
             o.write('# fold\ttrain\ttest\tparameters\n')
             o.write('%s\n' % ('\n'.join(auc_lines)))
             o.close()
-        
+            if self.parameters.cross_validation:
+                if auc_average == 'NA':
+                    break #### cleanup everything
+                elif auc_average < self.parameters.cross_validation_threshold:
+                    break #### cleanup everything
+            
         ## branch parameters
         for distance in self.parameters.max_distance:
             for threshold in self.parameters.threshold:
@@ -1456,7 +1465,7 @@ class selectNeighborhood(Target):
         self.directory = directory
     def run(self):
         if self.fold == 0:
-            ps_directory = '%s/analysis/%s/param_%s' % (self.directory, self.analysis.directory, '_'.join([str(parameter) for parameter in self.current_parameters]))
+            ps_directory = '%s/analysis/%s/final/param_%s' % (self.directory, self.analysis.directory, '_'.join([str(parameter) for parameter in self.current_parameters]))
             os.chdir(ps_directory)
         else:
             ps_directory = '%s/analysis/%s/fold%s/param_%s' % (self.directory, self.analysis.directory, self.fold, '_'.join([str(parameter) for parameter in self.current_parameters]))
@@ -1688,7 +1697,7 @@ class computeShifts(Target):
         self.alpha = alpha
     def run(self):
         if self.fold == 0:
-            ps_directory = '%s/analysis/%s/param_%s' % (self.directory, self.analysis.directory, '_'.join([str(parameter) for parameter in self.current_parameters]))
+            ps_directory = '%s/analysis/%s/final/param_%s' % (self.directory, self.analysis.directory, '_'.join([str(parameter) for parameter in self.current_parameters]))
             os.chdir(ps_directory)
         else:
             ps_directory = "%s/analysis/%s/fold%s/param_%s" % (self.directory, self.analysis.directory, self.fold, '_'.join([str(parameter) for parameter in self.current_parameters]))
@@ -1917,7 +1926,7 @@ class compareParameters(Target):
         self.directory = directory
     def run(self):
         if self.fold == 0:
-            ps_directory = '%s/analysis/%s' % (self.directory, self.analysis.directory)
+            ps_directory = '%s/analysis/%s/final' % (self.directory, self.analysis.directory)
             os.chdir(ps_directory)
             logger('Identifying the best parameters by training validation ...\n', file = 'progress.log')
         else:
@@ -1972,31 +1981,33 @@ class generateOutput(Target):
         logger('Generating output files ...\n', file = 'progress.log')
         
         ## copy tables
-        os.system('cp param_%s/significance.tab significance.tab' % ('_'.join(self.best_parameters)))
-        os.system('cp param_%s/pshift.tab pshift.tab' % ('_'.join(self.best_parameters)))
-        os.system('cp param_%s/normalized_pshift.tab normalized_pshift.tab' % ('_'.join(self.best_parameters)))
+        os.system('cp final/param_%s/significance.tab significance.tab' % ('_'.join(self.best_parameters)))
+        os.system('cp final/param_%s/pshift.tab pshift.tab' % ('_'.join(self.best_parameters)))
+        os.system('cp final/param_%s/normalized_pshift.tab normalized_pshift.tab' % ('_'.join(self.best_parameters)))
 
         ## output m-separation and significance plots
-        os.system('mseparation.R %s param_%s/positive.scores param_%s/negative.scores' % (self.analysis.focus_node,
+        os.system('mseparation.R %s final/param_%s/positive.scores final/param_%s/negative.scores' % (self.analysis.focus_node,
                                                                                           '_'.join(self.best_parameters),
                                                                                           '_'.join(self.best_parameters)))
-        os.system('significance.R %s param_%s/real.scores param_%s/null.scores' % (self.analysis.focus_node,
+        os.system('significance.R %s final/param_%s/real.scores final/param_%s/null.scores' % (self.analysis.focus_node,
                                                                                           '_'.join(self.best_parameters),
                                                                                           '_'.join(self.best_parameters)))
         
         ## output circleplots
         os.mkdir('img')
-        os.chdir('param_%s' % ('_'.join(self.best_parameters)))
-        os.system('%s -r color.map -o \"%s;alteration.circle,shift.circle\" -s include.samples -f alteration.features ../img/ alteration.circle expression.circle shift.circle' % (circleplot_executable, self.analysis.focus_node))
-        os.system('%s -r color.map -o \"%s;alteration.circle,shift.circle\" -s include.samples -f up.features ../img/ alteration.circle expression.circle' % (circleplot_executable, self.analysis.focus_node))
-        os.system('%s -r color.map -o \"%s;alteration.circle,shift.circle\" -s include.samples -f down.features ../img/ alteration.circle expression.circle' % (circleplot_executable, self.analysis.focus_node))
-        os.chdir('..')
+        os.chdir('final/param_%s' % ('_'.join(self.best_parameters)))
+        os.system('%s -r color.map -o \"%s;alteration.circle,shift.circle\" -s include.samples -f alteration.features ../../img/ alteration.circle expression.circle shift.circle' % (circleplot_executable, self.analysis.focus_node))
+        os.system('%s -r color.map -o \"%s;alteration.circle,shift.circle\" -s include.samples -f up.features ../../img/ alteration.circle expression.circle' % (circleplot_executable, self.analysis.focus_node))
+        os.system('%s -r color.map -o \"%s;alteration.circle,shift.circle\" -s include.samples -f down.features ../../img/ alteration.circle expression.circle' % (circleplot_executable, self.analysis.focus_node))
+        os.chdir('../..')
         
         ## output sif
         combined_pathway = Pathway( ({}, {}) )
-        combined_pathway.appendPathway(Pathway('param_%s/upstream_pathway.tab' % ('_'.join(self.best_parameters))))
-        combined_pathway.appendPathway(Pathway('param_%s/downstream_pathway.tab' % ('_'.join(self.best_parameters))))
+        combined_pathway.appendPathway(Pathway('final/param_%s/upstream_pathway.tab' % ('_'.join(self.best_parameters))))
+        combined_pathway.appendPathway(Pathway('final/param_%s/downstream_pathway.tab' % ('_'.join(self.best_parameters))))
         combined_pathway.writeSIF('pshift_%s.sif' % (self.analysis.focus_node))
+        
+        #### cleanup unneeded files
 
 class makeReport(Target):
     def __init__(self, report_list, report_directory, directory):
