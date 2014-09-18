@@ -5,7 +5,7 @@ paradigmSHIFT.py
 Author: Sam Ng
 Last Updated: 2014-08-04
 """
-import math, os, random, re, string, sys, types
+import math, os, random, re, shutil, string, sys, types
 from copy import deepcopy
 
 import pandas
@@ -726,7 +726,7 @@ def computeFeatureScores(data_map, positive_samples, negative_samples, upstream_
                     # through columns
                     for nodeB in sorted(self.labels):
                         if (nodeA, nodeB) in edges:
-                            printstr += '\t' + edges[(nodeA, nodeB)]	
+                            printstr += '\t' + edges[(nodeA, nodeB)]
                         else:
                             printstr += '\t0'
                     o.write(printstr + '\n')
@@ -1409,8 +1409,8 @@ class branchParameters(Target):
             for round in range(1, self.parameters.n_rounds + 1):
                 for fold in range(1, self.parameters.m_folds + 1):
                     fold_index = (round - 1)*self.parameters.m_folds + fold
-                    if os.path.exists('fold%s/auc.tab' % (fold_index)):
-                        f = open('fold%s/auc.tab' % (fold_index), 'r')
+                    if os.path.exists('../fold%s/auc.tab' % (fold_index)):
+                        f = open('../fold%s/auc.tab' % (fold_index), 'r')
                         line = f.readline()
                         f.close()
                         (auc_train, auc_test, auc_params) = line.rstrip().split('\t')
@@ -1419,17 +1419,31 @@ class branchParameters(Target):
                     auc_list.append(auc_test)
                     auc_lines.append('%s\t%s\t%s\t%s' % (fold_index, auc_train, auc_test, auc_params))
             auc_average = computeMean(auc_list)
-            o = open('average_auc.tab', 'w')
+            o = open('../average_auc.tab', 'w')
             o.write('> %s\tMean(AUC) = %s\n' % (self.analysis.analysis_name, auc_average))
             o.write('# fold\ttrain\ttest\tparameters\n')
             o.write('%s\n' % ('\n'.join(auc_lines)))
             o.close()
             if self.parameters.cross_validation:
                 if auc_average == 'NA':
-                    break #### cleanup everything
+                    os.chdir('..')
+                    shutil.rmtree('final')
+                    for round in range(1, self.parameters.n_rounds + 1):
+                        for fold in range(1, self.parameters.m_folds + 1):
+                            fold_index = (round - 1)*self.parameters.m_folds + fold
+                            shutil.rmtree('fold%s' % (fold_index))
+                    logger('Terminating analysis (did not pass cross-validation) ...\n', file = 'progress.log')
+                    return
                 elif auc_average < self.parameters.cross_validation_threshold:
-                    break #### cleanup everything
-            
+                    os.chdir('..')
+                    shutil.rmtree('final')
+                    for round in range(1, self.parameters.n_rounds + 1):
+                        for fold in range(1, self.parameters.m_folds + 1):
+                            fold_index = (round - 1)*self.parameters.m_folds + fold
+                            shutil.rmtree('fold%s' % (fold_index))
+                    logger('Terminating analysis (did not pass cross-validation) ...\n', file = 'progress.log')
+                    return
+        
         ## branch parameters
         for distance in self.parameters.max_distance:
             for threshold in self.parameters.threshold:
@@ -1996,9 +2010,9 @@ class generateOutput(Target):
         ## output circleplots
         os.mkdir('img')
         os.chdir('final/param_%s' % ('_'.join(self.best_parameters)))
-        os.system('%s -r color.map -o \"%s;alteration.circle,shift.circle\" -s include.samples -f alteration.features ../../img/ alteration.circle expression.circle shift.circle' % (circleplot_executable, self.analysis.focus_node))
-        os.system('%s -r color.map -o \"%s;alteration.circle,shift.circle\" -s include.samples -f up.features ../../img/ alteration.circle expression.circle' % (circleplot_executable, self.analysis.focus_node))
-        os.system('%s -r color.map -o \"%s;alteration.circle,shift.circle\" -s include.samples -f down.features ../../img/ alteration.circle expression.circle' % (circleplot_executable, self.analysis.focus_node))
+        os.system('%s -m color.map -o \"%s;alteration.circle,shift.circle\" -s include.samples -f alteration.features ../../img/ alteration.circle expression.circle shift.circle' % (circleplot_executable, self.analysis.focus_node))
+        os.system('%s -m color.map -o \"%s;alteration.circle,shift.circle\" -s include.samples -f up.features ../../img/ alteration.circle expression.circle' % (circleplot_executable, self.analysis.focus_node))
+        os.system('%s -m color.map -o \"%s;alteration.circle,shift.circle\" -s include.samples -f down.features ../../img/ alteration.circle expression.circle' % (circleplot_executable, self.analysis.focus_node))
         os.chdir('../..')
         
         ## output sif
@@ -2007,7 +2021,12 @@ class generateOutput(Target):
         combined_pathway.appendPathway(Pathway('final/param_%s/downstream_pathway.tab' % ('_'.join(self.best_parameters))))
         combined_pathway.writeSIF('pshift_%s.sif' % (self.analysis.focus_node))
         
-        #### cleanup unneeded files
+        ## cleanup unneeded files
+        for round in range(1, self.parameters.n_rounds + 1):
+            for fold in range(1, self.parameters.m_folds + 1):
+                fold_index = (round - 1)*self.parameters.m_folds + fold
+                shutil.rmtree('fold%s' % (fold_index))
+        logger('Completed analysis ...\n', file = 'progress.log')
 
 class makeReport(Target):
     def __init__(self, report_list, report_directory, directory):
