@@ -15,7 +15,8 @@ from jobTree.scriptTree.stack import Stack
 
 ## executables
 bin_directory = os.path.dirname(os.path.abspath(__file__))
-paradigm_executable = os.path.join(bin_directory, 'paradigm')
+# paradigm_executable = os.path.join(bin_directory, 'paradigm')
+paradigm_executable = 'paradigm'
 circleplot_executable = os.path.join(bin_directory, 'circlePlot.py')
 
 ## ps classes
@@ -49,7 +50,7 @@ class ParadigmSetup:
                     self.pathway = '%s/clusterFiles/%s' % (directory, file)
         else:
             assert(os.path.exists(pathway_file))
-            self.pathway = pathway_file 
+            self.pathway = os.path.abspath(pathway_file) 
         assert(self.pathway != None)
         (self.genome, self.mrna, self.protein, self.active, self.ipl) = ([], [], [], [], [])
         f = open(self.config, 'r')
@@ -2104,7 +2105,7 @@ def ps_main():
                                    include_samples = options.include_samples,
                                    null_size = int(options.null_size),
                                    batch_size = int(options.batch_size),
-                                   pathway_file = os.path.abspath(options.pathway_file),
+                                   pathway_file = options.pathway_file,
                                    public = options.paradigm_public)
     
     ## set pathway
@@ -2133,7 +2134,7 @@ def ps_main():
                                   pline[1].split(','),
                                   paradigm_setup.samples,
                                   pline[2].split(','),
-                                  negative_samples = Non)
+                                  negative_samples = None)
         elif len(pline) == 4:
             altered = Alterations(pline[0],
                                   pline[1].split(','),
