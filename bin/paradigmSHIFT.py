@@ -811,7 +811,7 @@ def computeFeatureScores(data_map, positive_samples, negative_samples, upstream_
             penalty_matrix = pandas.DataFrame(identity(len(feature_intersection)))
             penalty_matrix.columns = feature_intersection
             penalty_matrix.index = feature_intersection
-            data_frame[feature_intersection].loc[sample_intersection].to_csv('data.X.matrix', sep = '\t', index_label = 'id', na_rep = 0)
+            data_frame[feature_intersection].loc[sample_intersection].groupby(level=0, axis=0).mean().to_csv('data.X.matrix', sep = '\t', index_label = 'id', na_rep = 0)
             class_vector.loc[sample_intersection].to_csv('class.y.vector', sep = '\t', index_label = 'id')
             weight_vector.loc[feature_intersection].to_csv('weight.d.vector', sep = '\t', index_label = 'id')
             penalty_matrix.to_csv('penalty.P.matrix', sep = '\t', index_label = 'id')
@@ -1763,8 +1763,10 @@ class computeShifts(Target):
         for sample in self.paradigm_setup.samples:
             if sample in training_positive + testing_positive:
                 o.write("%s\t+\t%s\n" % (sample, raw_shifts['real'][sample]))
-            else:
+            elif sample in training_negative + testing_negative:
                 o.write("%s\t-\t%s\n" % (sample, raw_shifts['real'][sample]))
+            else:
+                o.write("%s\t?\t%s\n" % (sample, raw_shifts['real'][sample]))
         o.close()
         o = open('wildtype_shifts.tab', 'w')
         o.write("sample\tP-Shift\n")
@@ -1997,8 +1999,8 @@ class generateOutput(Target):
         ## copy tables
         os.system('cp final/param_%s/significance.tab significance.tab' % ('_'.join(self.best_parameters)))
         os.system('cp final/param_%s/pshift.tab pshift.tab' % ('_'.join(self.best_parameters)))
-        os.system('cp final/param_%s/normalized_pshift.tab normalized_pshift.tab' % ('_'.join(self.best_parameters)))
-
+        # os.system('cp final/param_%s/normalized_pshift.tab normalized_pshift.tab' % ('_'.join(self.best_parameters)))
+        
         ## output m-separation and significance plots
         os.system('mseparation.R %s final/param_%s/positive.scores final/param_%s/negative.scores' % (self.analysis.focus_node,
                                                                                           '_'.join(self.best_parameters),
@@ -2025,7 +2027,8 @@ class generateOutput(Target):
         for round in range(1, self.parameters.n_rounds + 1):
             for fold in range(1, self.parameters.m_folds + 1):
                 fold_index = (round - 1)*self.parameters.m_folds + fold
-                shutil.rmtree('fold%s' % (fold_index))
+                if os.path.exists('fold%s' % (fold_index)):
+                    shutil.rmtree('fold%s' % (fold_index))
         logger('Completed analysis ...\n', file = 'progress.log')
 
 class makeReport(Target):
@@ -2042,13 +2045,15 @@ class makeReport(Target):
             os.mkdir('%s' % (self.report_directory))
         
         for analysis in self.report_list:
+            if os.path.exists('%s/%s' % (self.report_directory, analysis)):
+                continue
             os.mkdir('%s/%s' % (self.report_directory, analysis))
             os.system('cp analysis/%s/pshift.tab %s/%s' % (analysis, self.report_directory, analysis))
             os.system('cp analysis/%s/significance.tab %s/%s' % (analysis, self.report_directory, analysis))
             os.system('cp analysis/%s/*.sif %s/%s' % (analysis, self.report_directory, analysis))
             os.system('cp -r analysis/%s/img %s/%s' % (analysis, self.report_directory, analysis))
             os.system('cp analysis/%s/*.pdf %s/%s' % (analysis, self.report_directory, analysis))
-            
+        
         ## cytoscape-web
         # for gene in self.includeFeatures:
         #     if os.path.exists('analysis/%s/sig.tab' % (gene)):
