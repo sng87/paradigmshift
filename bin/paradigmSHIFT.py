@@ -189,7 +189,7 @@ class Pathway:
         elif type(input) == types.StringType:
             (self.nodes, self.interactions) = self.readSPF(input)
         else:
-			raise Exception("invalid input for pathway import (%s)\n" % (input))
+            raise Exception("invalid input for pathway import (%s)\n" % (input))
     def readSPF(self, input_file):
         nodes = {}
         interactions = {}
@@ -208,7 +208,7 @@ class Pathway:
                 else:
                     interactions[pline[0]][pline[1]] += ";" + pline[2]
             else:
-				raise Exception("expected length 2 or 3 on line %s\n" % (line))
+                raise Exception("expected length 2 or 3 on line %s\n" % (line))
         f.close()
         return(nodes, interactions)
     def writeSPF(self, output_file, reverse = False):
@@ -386,7 +386,7 @@ def returnColumns(input_file, sep = "\t", index = 0):
             f.readline()
     line = f.readline().rstrip()
     if line.isspace():
-		raise Exception("encountered a blank header\n")
+        raise Exception("encountered a blank header\n")
     f.close()
     return(line.split(sep)[1:])
 
@@ -934,7 +934,7 @@ def getSelectedNeighborhood(focus_node, focus_genes, data_map, positive_samples,
             logger('%s\t%s\t%s\t%s\n' % (current_feature, getUpstreamValue(current_feature, score_map), len(selected_upstream_features), upstream_path_map[current_feature]), file = 'selection.log')
             selected_upstream_features.append(current_feature)
             for path in upstream_path_map[current_feature]:
-				collapsed_path = collapsePath(path, max_distance = max_distance)
+                collapsed_path = collapsePath(path, max_distance = max_distance)
                 for edge in collapsed_path:
                     if edge[0] not in selected_upstream_pathway.nodes:
                         if edge[0] not in base_upstream_pathway.nodes:
@@ -972,7 +972,7 @@ def getSelectedNeighborhood(focus_node, focus_genes, data_map, positive_samples,
             logger('%s\t%s\t%s\t%s\n' % (current_feature, getDownstreamValue(current_feature, score_map), len(selected_downstream_features), downstream_path_map[current_feature]), file = 'selection.log')
             selected_downstream_features.append(current_feature)
             for path in downstream_path_map[current_feature]:
-				collapsed_path = collapsePath(path, max_distance = max_distance)
+                collapsed_path = collapsePath(path, max_distance = max_distance)
                 for edge in collapsed_path:
                     if edge[0] not in selected_downstream_pathway.nodes:
                         if edge[0] not in base_downstream_pathway.nodes:
@@ -1475,19 +1475,19 @@ class branchParameters(Target):
                     return
         
         ## branch parameters
-		for threshold in self.parameters.threshold:
-			for cost in self.parameters.cost:
-				for method in self.parameters.selection_method:
-					current_parameters = [threshold, cost, method]
-					os.mkdir('param_%s' % ('_'.join([str(parameter) for parameter in current_parameters])))
-					self.addChildTarget(selectNeighborhood(self.fold,
-														   self.analysis,
-														   self.training_samples,
-														   self.paradigm_setup,
-														   self.global_pathway,
-														   current_parameters,
-														   self.parameters,
-														   self.directory))
+        for threshold in self.parameters.threshold:
+            for cost in self.parameters.cost:
+                for method in self.parameters.selection_method:
+                    current_parameters = [threshold, cost, method]
+                    os.mkdir('param_%s' % ('_'.join([str(parameter) for parameter in current_parameters])))
+                    self.addChildTarget(selectNeighborhood(self.fold,
+                                                           self.analysis,
+                                                           self.training_samples,
+                                                           self.paradigm_setup,
+                                                           self.global_pathway,
+                                                           current_parameters,
+                                                           self.parameters,
+                                                           self.directory))
         
         ## evaluate models
         self.setFollowOnTarget(compareParameters(self.fold,
@@ -1580,9 +1580,9 @@ class selectNeighborhood(Target):
                                                    downstream_pathway_map,
                                                    base_upstream_pathway,
                                                    base_downstream_pathway,
-                                                   threshold = self.current_parameters[1],
-                                                   cost = self.current_parameters[2],
-                                                   method = self.current_parameters[3])
+                                                   threshold = self.current_parameters[0],
+                                                   cost = self.current_parameters[1],
+                                                   method = self.current_parameters[2])
         
         if not selection_pass:
             o = open('auc.tab', 'w')
@@ -1982,25 +1982,25 @@ class compareParameters(Target):
         best_training_auc = 0.0
         best_testing_auc = 0.0
         best_parameters = None
-		for threshold in self.parameters.threshold:
-			for cost in self.parameters.cost:
-				for method in self.parameters.selection_method:
-					current_parameters = [threshold, cost, method]
-					f = open('param_%s/auc.tab' % ('_'.join([str(parameter) for parameter in current_parameters])), 'r')
-					(current_training_auc, current_testing_auc) = f.readline().rstrip().split('\t')
-					f.close()
-					try:
-						current_training_auc = float(current_training_auc)
-					except ValueError:
-						continue
-					try:
-						current_testing_auc = float(current_testing_auc)
-					except ValueError:
-						pass
-					if current_training_auc > best_training_auc:
-						best_training_auc = current_training_auc
-						best_testing_auc = current_testing_auc
-						best_parameters = [str(threshold), str(cost), str(method)]
+        for threshold in self.parameters.threshold:
+            for cost in self.parameters.cost:
+                for method in self.parameters.selection_method:
+                    current_parameters = [threshold, cost, method]
+                    f = open('param_%s/auc.tab' % ('_'.join([str(parameter) for parameter in current_parameters])), 'r')
+                    (current_training_auc, current_testing_auc) = f.readline().rstrip().split('\t')
+                    f.close()
+                    try:
+                        current_training_auc = float(current_training_auc)
+                    except ValueError:
+                        continue
+                    try:
+                        current_testing_auc = float(current_testing_auc)
+                    except ValueError:
+                        pass
+                    if current_training_auc > best_training_auc:
+                        best_training_auc = current_training_auc
+                        best_testing_auc = current_testing_auc
+                        best_parameters = [str(threshold), str(cost), str(method)]
         if self.fold != 0:
             o = open('auc.tab', 'w')
             if best_training_auc == 0.0:
