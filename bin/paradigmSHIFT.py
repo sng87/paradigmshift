@@ -22,7 +22,7 @@ circleplot_executable = os.path.join(bin_directory, 'circlePlot.py')
 ## ps classes
 class ParadigmSetup:
     """
-    Stores relevant information for preparing a Paradigm run [Paradigm-Shift specific]
+    Stores relevant information for preparing a Paradigm run [paradigmSHIFT.py specific]
     Dependencies: returnColumns, returnRows, readList
     """
     def __init__(self, directory, include_samples = None, null_size = 30, batch_size = 50, pathway_file = None, public = False):
@@ -102,7 +102,7 @@ class ParadigmSetup:
 
 class Parameters:
     """
-    Stores parameters used for the Paradigm-Shift algorithm [Paradigm-Shift specific]
+    Stores parameters used for the Paradigm-Shift algorithm [paradigmSHIFT.py specific]
     """
     def __init__(self):
         self.random_seed = 0
@@ -110,7 +110,7 @@ class Parameters:
         self.in_parallel = False
         self.n_rounds = 1
         self.m_folds = 5
-        self.max_distance = [2]
+        self.search_distance = 2
         self.threshold = [0.84]
         self.cost = [0.0]
         self.selection_method = ['tt']
@@ -126,8 +126,8 @@ class Parameters:
             if line.isspace():
                 continue
             pline = line.rstrip().split('\t')
-            if line.startswith('distance') or line.startswith('max_distance'):
-                self.max_distance = [int(item) for item in pline[1].split(',')]
+            if line.startswith('search_distance'):
+                self.search_distance = int(pline[1])
             elif line.startswith('threshold'):
                 self.threshold = [float(item) for item in pline[1].split(',')]
             elif line.startswith('cost'):
@@ -144,7 +144,7 @@ class Parameters:
                 self.report_directory = pline[1].rstrip('/')
         f.close()
     def setSeed(self, seed_input = None):
-        if seed_input == None:
+        if seed_input is None:
             self.random_seed = random.randint(0, 999999999)
         else:
             if os.path.exists(seed_input):
@@ -160,7 +160,7 @@ class Parameters:
 
 class Alterations:
     """
-    Stores the alterations for a particular analysis run [Paradigm-Shift specific]
+    Stores the alterations for a particular analysis run [paradigmSHIFT.py specific]
     """
     def __init__(self, analysis_name, focus_genes, all_samples, positive_samples, negative_samples = None):
         self.analysis_name = analysis_name
@@ -177,8 +177,7 @@ class Alterations:
 
 class Pathway:
     """
-    Paradigm compatible pathway class [2014-6-9]
-    Dependencies: logger
+    Paradigm compatible pathway class [2014-12-14]
     """
     def __init__(self, input, pid = None):
         self.nodes = {}
@@ -190,15 +189,15 @@ class Pathway:
         elif type(input) == types.StringType:
             (self.nodes, self.interactions) = self.readSPF(input)
         else:
-            logger('ERROR: invalid input for pathway import (%s)\n' % (input), die = True)
+			raise Exception("invalid input for pathway import (%s)\n" % (input))
     def readSPF(self, input_file):
         nodes = {}
         interactions = {}
-        f = open(input_file, 'r')
+        f = open(input_file, "r")
         for line in f:
             if line.isspace():
                 continue
-            pline = line.rstrip().split('\t')
+            pline = line.rstrip().split("\t")
             if len(pline) == 2:
                 nodes[pline[1]] = pline[0]
             elif len(pline) == 3:
@@ -207,26 +206,26 @@ class Pathway:
                 if pline[1] not in interactions[pline[0]]:
                     interactions[pline[0]][pline[1]] = pline[2]
                 else:
-                    interactions[pline[0]][pline[1]] += ';' + pline[2]
+                    interactions[pline[0]][pline[1]] += ";" + pline[2]
             else:
-                logger('ERROR: expected length 2 or 3 on line %s\n' % (line), die = True)
+				raise Exception("expected length 2 or 3 on line %s\n" % (line))
         f.close()
         return(nodes, interactions)
     def writeSPF(self, output_file, reverse = False):
-        o = open(output_file, 'w')
+        o = open(output_file, "w")
         for node in self.nodes:
-            o.write('%s\t%s\n' % (self.nodes[node], node))
+            o.write("%s\t%s\n" % (self.nodes[node], node))
         for source in self.interactions:
             for target in self.interactions[source]:
-                for interaction in self.interactions[source][target].split(';'):
-                    o.write('%s\t%s\t%s\n' % (source, target, interaction))
+                for interaction in self.interactions[source][target].split(";"):
+                    o.write("%s\t%s\t%s\n" % (source, target, interaction))
         o.close()
     def writeSIF(self, output_file):
-        o = open(output_file, 'w')
+        o = open(output_file, "w")
         for source in self.interactions:
             for target in self.interactions[source]:
-                for interaction in self.interactions[source][target].split(';'):
-                    o.write('%s\t%s\t%s\n' % (source, interaction, target))
+                for interaction in self.interactions[source][target].split(";"):
+                    o.write("%s\t%s\t%s\n" % (source, interaction, target))
         o.close()
     def networkx(self):
         networkx_graph = networkx.MultiDiGraph()
@@ -234,7 +233,7 @@ class Pathway:
             networkx_graph.add_node(node, type = self.nodes[node])
         for source in self.interactions:
             for target in self.interactions[source]:
-                for interaction in self.interactions[source][target].split(';'):
+                for interaction in self.interactions[source][target].split(";"):
                     networkx_graph.add_edge(source, target, interaction = interaction)
         return(networkx_graph)
     def reverse(self):
@@ -245,7 +244,7 @@ class Pathway:
                     reversed_interactions[target] = {}
                 reversed_interactions[target][source] = self.interactions[source][target]
         return(reversed_interactions)
-    def getShortestPaths(self, source, target, max_distance = None):
+    def getShortestPaths(self, source, target, search_distance = None):
         shortest_paths = []
         all_walks = [[source]]
         while len(shortest_paths) == 0:
@@ -266,15 +265,15 @@ class Pathway:
                     next_walks.append(current_walk + [intermediate])
             if len(next_walks) == 0:
                 break
-            if max_distance is not None:
-                if len(next_walks[0]) >= max_distance + 1:
+            if search_distance is not None:
+                if len(next_walks[0]) >= search_distance + 1:
                     break
             all_walks = deepcopy(next_walks)
         return(shortest_paths)
-    def getAllPaths(self, source, target, max_distance):
+    def getAllPaths(self, source, target, search_distance):
         all_paths = []
         all_walks = [[source]]
-        for distance in range(1, max_distance + 1):
+        for distance in range(1, search_distance + 1):
             next_walks = []
             while len(all_walks) > 0:
                 current_walk = all_walks.pop()
@@ -294,12 +293,12 @@ class Pathway:
                 break
             all_walks = deepcopy(next_walks)
         return(all_paths)
-    def getNeighbors(self, node, max_distance):
+    def getNeighbors(self, node, search_distance):
         reversed_interactions = self.reverse()
         seen_nodes = set([node])
         border_nodes = [node]
         frontier_nodes = []
-        for distance in range(max_distance):
+        for distance in range(search_distance):
             while len(border_nodes) > 0:
                 current_node = border_nodes.pop()
                 if current_node in self.interactions:
@@ -343,10 +342,10 @@ class Pathway:
                 if target not in self.interactions[source]:
                     self.interactions[source][target] = append_pathway.interactions[source][target]
                 else:
-                    self.interactions[source][target] = ';'.join(list(set(self.interactions[source][target].split(';')) |
-                                                                      set(append_pathway.interactions[source][target].split(';'))))
+                    self.interactions[source][target] = ";".join(list(set(self.interactions[source][target].split(";")) |
+                                                                      set(append_pathway.interactions[source][target].split(";"))))
 
-## ps functions
+## functions
 def logger(message, file = None, die = False):
     """
     Writes messages to standard error [2014-3-1]
@@ -360,17 +359,16 @@ def logger(message, file = None, die = False):
     if die:
         sys.exit(1)
 
-def returnRows(input_file, sep = '\t', index = 0, header = True):
+def returnRows(input_file, sep = "\t", index = 0, header = True):
     """
-    Returns the rows of a file without loading it into memory [2014-3-1]
-    Dependencies: logger
+    Returns the rows of a file without loading it into memory [2014-12-14]
     """
     rows = []
-    f = open(input_file, 'r')
+    f = open(input_file, "r")
     if header:
         line = f.readline()
         if line.isspace():
-            logger('ERROR: encountered a blank header\n', die = True)
+            raise Exception("encountered a blank header\n")
     for line in f:
         if line.isspace():
             continue
@@ -378,18 +376,17 @@ def returnRows(input_file, sep = '\t', index = 0, header = True):
     f.close()
     return(rows)
 
-def returnColumns(input_file, sep = '\t', index = 0):
+def returnColumns(input_file, sep = "\t", index = 0):
     """
-    Returns the columns of a file without loading it into memory [2014-3-1]
-    Dependencies: logger
+    Returns the columns of a file without loading it into memory [2014-12-14]
     """
-    f = open(input_file, 'r')
+    f = open(input_file, "r")
     if index > 0:
         for n in range(index):
             f.readline()
     line = f.readline().rstrip()
     if line.isspace():
-        logger('ERROR: encountered a blank header\n', die = True)
+		raise Exception("encountered a blank header\n")
     f.close()
     return(line.split(sep)[1:])
 
@@ -408,7 +405,7 @@ def readList(input_file, header = False):
     f.close()
     return(input_list)
 
-def getFullNeighborhood(focus_genes, global_pathway, max_distance = 2):
+def getFullNeighborhood(focus_genes, global_pathway, search_distance = 2):
     """
     Simplifies complex interactions to match the Paradigm-Shift inference model [Paradigm-Shift specific]
     """
@@ -441,13 +438,13 @@ def getFullNeighborhood(focus_genes, global_pathway, max_distance = 2):
         for index, group in enumerate(grouped_complexes):
             group_index[index + 1] = deepcopy(group)
         return(group_index)
-    def searchUpstream(focus_gene, focus_group, global_pathway, reversed_interactions, max_distance = 2):
+    def searchUpstream(focus_gene, focus_group, global_pathway, reversed_interactions, search_distance = 2):
         upstream_pathway = Pathway( ({focus_gene : global_pathway.nodes[focus_gene]}, {}) )
         seen_nodes = set(focus_group)
         seen_nodes.update([focus_gene])
         border_nodes = deepcopy(focus_group)
         frontier_nodes = []
-        for distance in range(1, max_distance + 1):
+        for distance in range(1, search_distance + 1):
             while(len(border_nodes) > 0):
                 current_node = border_nodes.pop(0)
                 if current_node in reversed_interactions:
@@ -486,13 +483,13 @@ def getFullNeighborhood(focus_genes, global_pathway, max_distance = 2):
                             seen_nodes.update([source])
             border_nodes = deepcopy(frontier_nodes)
         return(upstream_pathway)
-    def searchDownstream(focus_gene, focus_group, global_pathway, reversed_interactions, max_distance = 2):
+    def searchDownstream(focus_gene, focus_group, global_pathway, reversed_interactions, search_distance = 2):
         downstream_pathway = Pathway( ({focus_gene : global_pathway.nodes[focus_gene]}, {}) )
         seen_nodes = set(focus_group)
         seen_nodes.update([focus_gene])
         border_nodes = deepcopy(focus_group)
         frontier_nodes = []
-        for distance in range(1, max_distance + 1):
+        for distance in range(1, search_distance + 1):
             while(len(border_nodes) > 0):
                 current_node = border_nodes.pop(0)
                 if current_node in global_pathway.interactions:
@@ -536,15 +533,15 @@ def getFullNeighborhood(focus_genes, global_pathway, max_distance = 2):
                                                                          group_index[focus_gene][index],
                                                                          global_pathway,
                                                                          reversed_interactions,
-                                                                         max_distance = max_distance)),
+                                                                         search_distance = search_distance)),
                                                  deepcopy(searchDownstream(focus_gene,
                                                                            group_index[focus_gene][index],
                                                                            global_pathway,
                                                                            reversed_interactions,
-                                                                           max_distance = max_distance))]
+                                                                           search_distance = search_distance))]
     return(group_index, group_pathways)
 
-def getRelevantPaths(focus_genes, upstream_pathway, downstream_pathway, max_distance = 2):
+def getRelevantPaths(focus_genes, upstream_pathway, downstream_pathway, search_distance = 2):
     """
     Identifies relevant paths between features and the focus gene [Paradigm-Shift specific]
     """
@@ -554,7 +551,7 @@ def getRelevantPaths(focus_genes, upstream_pathway, downstream_pathway, max_dist
         for node in upstream_pathway.nodes:
             if node == focus_gene:
                 continue
-            all_paths = upstream_pathway.getAllPaths(node, focus_gene, max_distance)
+            all_paths = upstream_pathway.getAllPaths(node, focus_gene, search_distance)
             legal_paths = []        ## upstream paths must start with a protein
             for path in all_paths:
                 if upstream_pathway.nodes[path[0][0]] == 'protein':
@@ -567,7 +564,7 @@ def getRelevantPaths(focus_genes, upstream_pathway, downstream_pathway, max_dist
         for node in downstream_pathway.nodes:
             if node == focus_gene:
                 continue
-            all_paths = downstream_pathway.getAllPaths(focus_gene, node, max_distance)
+            all_paths = downstream_pathway.getAllPaths(focus_gene, node, search_distance)
             legal_paths = []        ## downstream paths must end with a protein and a transcriptional edge
             for path in all_paths:
                 if downstream_pathway.nodes[path[-1][2]] == 'protein' and path[-1][1].startswith('-t'):
@@ -857,7 +854,24 @@ def computeFeatureScores(data_map, positive_samples, negative_samples, upstream_
     else:
         return(computeFeatureRanks(score_map))
 
-def getSelectedNeighborhood(focus_node, focus_genes, data_map, positive_samples, negative_samples, upstream_path_map, downstream_path_map, upstream_pathway_map, downstream_pathway_map, base_upstream_pathway, base_downstream_pathway, threshold = 0.84, cost = 0.0, method = 'variance'):
+def collapsePath(path, max_distance = 2):
+    if len(path) <= max_distance:
+        return(path)
+    collapsed_node = "//".join([edge[2] for edge in path[:len(path) - max_distance + 1]])
+    if [edge[1][-1] for edge in path[:len(path) - max_distance + 1]].count("|") % 2 == 0:
+        if len(path[len(path) - max_distance][1]) == 3 and path[len(path) - max_distance][1].startswith("-t"):
+            collapsed_interaction = "-t>"
+        else:
+            collapsed_interaction = "-a>"
+    else:
+        if len(path[len(path) - max_distance][1]) == 3 and path[len(path) - max_distance][1].startswith("-t"):
+            collapsed_interaction = "-t|"
+        else:
+            collapsed_interaction = "-a|"
+    collapsed_path = [(path[0][0], collapsed_interaction, collapsed_node), (collapsed_node, path[len(path) - max_distance + 1][1], path[len(path) - max_distance + 1][2])] + path[len(path) - max_distance + 2:]
+    return(collapsed_path)
+
+def getSelectedNeighborhood(focus_node, focus_genes, data_map, positive_samples, negative_samples, upstream_path_map, downstream_path_map, upstream_pathway_map, downstream_pathway_map, base_upstream_pathway, base_downstream_pathway, threshold = 0.84, cost = 0.0, method = 'variance' , max_distance = 2):
     def getUpstreamValue(feature, value_map):
         value_list = []
         if 'mrna' in value_map:
@@ -920,11 +934,18 @@ def getSelectedNeighborhood(focus_node, focus_genes, data_map, positive_samples,
             logger('%s\t%s\t%s\t%s\n' % (current_feature, getUpstreamValue(current_feature, score_map), len(selected_upstream_features), upstream_path_map[current_feature]), file = 'selection.log')
             selected_upstream_features.append(current_feature)
             for path in upstream_path_map[current_feature]:
-                for edge in path:
+				collapsed_path = collapsePath(path, max_distance = max_distance)
+                for edge in collapsed_path:
                     if edge[0] not in selected_upstream_pathway.nodes:
-                        selected_upstream_pathway.nodes[edge[0]] = base_upstream_pathway.nodes[edge[0]]
+                        if edge[0] not in base_upstream_pathway.nodes:
+                            selected_upstream_pathway.nodes[edge[0]] = "abstract"
+                        else:
+                            selected_upstream_pathway.nodes[edge[0]] = base_upstream_pathway.nodes[edge[0]]
                     if edge[2] not in selected_upstream_pathway.nodes:
-                        selected_upstream_pathway.nodes[edge[2]] = base_upstream_pathway.nodes[edge[2]]
+                        if edge[2] not in base_upstream_pathway.nodes:
+                            selected_upstream_pathway.nodes[edge[2]] = "abstract"
+                        else:
+                            selected_upstream_pathway.nodes[edge[2]] = base_upstream_pathway.nodes[edge[2]]
                     if edge[0] not in selected_upstream_pathway.interactions:
                         selected_upstream_pathway.interactions[edge[0]] = {}
                     selected_upstream_pathway.interactions[edge[0]][edge[2]] = edge[1]
@@ -951,11 +972,18 @@ def getSelectedNeighborhood(focus_node, focus_genes, data_map, positive_samples,
             logger('%s\t%s\t%s\t%s\n' % (current_feature, getDownstreamValue(current_feature, score_map), len(selected_downstream_features), downstream_path_map[current_feature]), file = 'selection.log')
             selected_downstream_features.append(current_feature)
             for path in downstream_path_map[current_feature]:
-                for edge in path:
+				collapsed_path = collapsePath(path, max_distance = max_distance)
+                for edge in collapsed_path:
                     if edge[0] not in selected_downstream_pathway.nodes:
-                        selected_downstream_pathway.nodes[edge[0]] = base_downstream_pathway.nodes[edge[0]]
+                        if edge[0] not in base_downstream_pathway.nodes:
+                            selected_downstream_pathway.nodes[edge[0]] = "abstract"
+                        else:
+                            selected_downstream_pathway.nodes[edge[0]] = base_downstream_pathway.nodes[edge[0]]
                     if edge[2] not in selected_downstream_pathway.nodes:
-                        selected_downstream_pathway.nodes[edge[2]] = base_downstream_pathway.nodes[edge[2]]
+                        if edge[2] not in base_downstream_pathway.nodes:
+                            selected_downstream_pathway.nodes[edge[2]] = "abstract"
+                        else:
+                            selected_downstream_pathway.nodes[edge[2]] = base_downstream_pathway.nodes[edge[2]]
                     if edge[0] not in selected_downstream_pathway.interactions:
                         selected_downstream_pathway.interactions[edge[0]] = {}
                     selected_downstream_pathway.interactions[edge[0]][edge[2]] = edge[1]
@@ -1195,6 +1223,7 @@ def computeAUC(ranked_features, score_map, classification_map):
 def computeWelchsT(values_1, values_2, alpha = 0.0, return_df = False):
     """
     Computes the t_statistic for a the Welch's T-test for unpaired distributions of unequal variance [2014-3-11]
+    Would be better to use scipy.stats.ttest_ind
     Dependencies: computeMean
     """
     (mean_1, sd_1) = computeMean(values_1, return_sd = True)
@@ -1446,20 +1475,19 @@ class branchParameters(Target):
                     return
         
         ## branch parameters
-        for distance in self.parameters.max_distance:
-            for threshold in self.parameters.threshold:
-                for cost in self.parameters.cost:
-                    for method in self.parameters.selection_method:
-                        current_parameters = [distance, threshold, cost, method]
-                        os.mkdir('param_%s' % ('_'.join([str(parameter) for parameter in current_parameters])))
-                        self.addChildTarget(selectNeighborhood(self.fold,
-                                                               self.analysis,
-                                                               self.training_samples,
-                                                               self.paradigm_setup,
-                                                               self.global_pathway,
-                                                               current_parameters,
-                                                               self.parameters,
-                                                               self.directory))
+		for threshold in self.parameters.threshold:
+			for cost in self.parameters.cost:
+				for method in self.parameters.selection_method:
+					current_parameters = [threshold, cost, method]
+					os.mkdir('param_%s' % ('_'.join([str(parameter) for parameter in current_parameters])))
+					self.addChildTarget(selectNeighborhood(self.fold,
+														   self.analysis,
+														   self.training_samples,
+														   self.paradigm_setup,
+														   self.global_pathway,
+														   current_parameters,
+														   self.parameters,
+														   self.directory))
         
         ## evaluate models
         self.setFollowOnTarget(compareParameters(self.fold,
@@ -1508,7 +1536,7 @@ class selectNeighborhood(Target):
         if (selected_upstream is None) and (selected_downstream is None):
             (group_index, group_pathways) = getFullNeighborhood(self.analysis.focus_genes,
                                                                 self.global_pathway,
-                                                                max_distance = self.current_parameters[0])
+                                                                search_distance = self.parameters.search_distance)
             upstream_pathway_map = {}
             downstream_pathway_map = {}
             for focus_gene in self.analysis.focus_genes:
@@ -1531,7 +1559,7 @@ class selectNeighborhood(Target):
             (upstream_path_map, downstream_path_map) = getRelevantPaths(self.analysis.focus_genes,
                                                                         base_upstream_pathway,
                                                                         base_downstream_pathway,
-                                                                        max_distance = self.current_parameters[0])
+                                                                        search_distance = self.parameters.search_distance)
             
             ## score and select features
             data_map = {}
@@ -1954,26 +1982,25 @@ class compareParameters(Target):
         best_training_auc = 0.0
         best_testing_auc = 0.0
         best_parameters = None
-        for distance in self.parameters.max_distance:
-            for threshold in self.parameters.threshold:
-                for cost in self.parameters.cost:
-                    for method in self.parameters.selection_method:
-                        current_parameters = [distance, threshold, cost, method]
-                        f = open('param_%s/auc.tab' % ('_'.join([str(parameter) for parameter in current_parameters])), 'r')
-                        (current_training_auc, current_testing_auc) = f.readline().rstrip().split('\t')
-                        f.close()
-                        try:
-                            current_training_auc = float(current_training_auc)
-                        except ValueError:
-                            continue
-                        try:
-                            current_testing_auc = float(current_testing_auc)
-                        except ValueError:
-                            pass
-                        if current_training_auc > best_training_auc:
-                            best_training_auc = current_training_auc
-                            best_testing_auc = current_testing_auc
-                            best_parameters = [str(distance), str(threshold), str(cost), str(method)]
+		for threshold in self.parameters.threshold:
+			for cost in self.parameters.cost:
+				for method in self.parameters.selection_method:
+					current_parameters = [threshold, cost, method]
+					f = open('param_%s/auc.tab' % ('_'.join([str(parameter) for parameter in current_parameters])), 'r')
+					(current_training_auc, current_testing_auc) = f.readline().rstrip().split('\t')
+					f.close()
+					try:
+						current_training_auc = float(current_training_auc)
+					except ValueError:
+						continue
+					try:
+						current_testing_auc = float(current_testing_auc)
+					except ValueError:
+						pass
+					if current_training_auc > best_training_auc:
+						best_training_auc = current_training_auc
+						best_testing_auc = current_testing_auc
+						best_parameters = [str(threshold), str(cost), str(method)]
         if self.fold != 0:
             o = open('auc.tab', 'w')
             if best_training_auc == 0.0:
