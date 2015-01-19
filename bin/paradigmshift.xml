@@ -1,0 +1,18 @@
+<tool id="paradigmshift" name="PARADIGM-SHIFT" version="1.0">
+  <description>PARADIGM-SHIFT</description>
+  <command interpreter="python">paradigmSHIFT.py -z $seed -n $nulls $paradigm $events
+    #if str($pathway) != 'None':
+      -p $pathway
+    #end if
+  </command>
+  <inputs>
+	  <param name="paradigm" type="data" format="zip" label="PARADIGM Directory"/>
+	  <param name="events" type="data" format="tabular" label="Genomic Events File"/>
+	  <param name="nulls" type="integer" value="0" label="# of Nulls"/>
+	  <param name="seed" type="integer" value="0" label="Random Seed"/>
+	  <param name="pathway" type="data" format="tabular" label="Pathway File" optional="true"/>
+  </inputs>
+  <outputs>
+      <data name="report" format="zip" label="PARADIGM-SHIFT Report"/>
+  </outputs>
+</tool>

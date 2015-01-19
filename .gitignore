@@ -1,0 +1,4 @@
+init.csh
+init.sh
+*.pyc
+.DS_Store
