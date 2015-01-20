@@ -1,7 +1,7 @@
 THISDIR = ${CURDIR}
-THISOS = ${shell uname -s}
 
-PARADIGM_GIT = https://github.com/ucscCancer/paradigm-scripts.git
+PARADIGM_GIT = git://github.com/ucscCancer/paradigm-scripts.git
+PATHMARK_GIT = git://github.com/ucscCancer/pathmark-scripts.git
 
 all : init.sh init.csh
 
@@ -28,8 +28,14 @@ paradigm-scripts :
 	fi
 	ln -s ../paradigm-scripts paradigm-scripts
 
+pathmark-scripts :
+	if [ ! -d '../pathmark-scripts' ]; then \
+		cd ..; git clone ${PATHMARK_GIT}; cd pathmark-scripts; make; \
+	fi
+	ln -s ../pathmark-scripts pathmark-scripts
+
 clean :
-	rm -f init.sh init.csh
+	rm -f init.sh init.csh paradigm-scripts pathmark-scripts
 	if [ -d 'example' ]; then \
 		cd example; make clean; \
 	fi
