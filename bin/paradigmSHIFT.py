@@ -19,10 +19,10 @@ bin_directory = os.path.dirname(os.path.abspath(__file__))
 paradigm_executable = 'paradigm'
 circleplot_executable = os.path.join(bin_directory, 'circlePlot.py')
 
-## ps classes
+## classes
 class ParadigmSetup:
     """
-    Stores relevant information for preparing a Paradigm run [paradigmSHIFT.py specific]
+    Stores relevant information for preparing Paradigm runs [paradigmSHIFT.py specific]
     Dependencies: returnColumns, returnRows, readList
     """
     def __init__(self, directory, include_samples = None, null_size = 30, batch_size = 50, pathway_file = None, public = False):
@@ -31,17 +31,20 @@ class ParadigmSetup:
         self.null_size = null_size
         self.batch_size = batch_size
         self.public = public
+        ## locate config and params files
         (self.config, self.params) = (None, None)
         assert(os.path.exists('%s/config.txt' % (directory)))
         assert(os.path.exists('%s/params.txt' % (directory)))
         self.config = '%s/config.txt' % (directory)
         self.params = '%s/params.txt' % (directory)
+        ## locate imap and dogma files (optional)
         (self.imap, self.dogma) = (None, None)
         for file in os.listdir(directory):
             if file.endswith('.imap'):
                 self.imap = '%s/%s' % (directory, file)
             elif file.endswith('.dogma'):
                 self.dogma = '%s/%s' % (directory, file)
+        ## locate pathway file or set user defined pathway file (optional)
         (self.pathway) = (None)
         if pathway_file is None:
             for file in os.listdir('%s/clusterFiles' % (directory)):
@@ -52,6 +55,8 @@ class ParadigmSetup:
             assert(os.path.exists(pathway_file))
             self.pathway = os.path.abspath(pathway_file) 
         assert(self.pathway != None)
+        ## locate data files from config file and clusterFiles directory
+        self.data = []
         (self.genome, self.mrna, self.protein, self.active, self.ipl) = ([], [], [], [], [])
         f = open(self.config, 'r')
         for line in f:
@@ -68,12 +73,16 @@ class ParadigmSetup:
                     elif parts[0] == 'suffix':
                         attach_file = parts[1]
                 if attach_node == 'genome':
+                    self.data.append(attach_file)
                     self.genome.append('%s/clusterFiles/%s' % (directory, attach_file))
                 elif attach_node == 'mRNA':
+                    self.data.append(attach_file)
                     self.mrna.append('%s/clusterFiles/%s' % (directory, attach_file))
                 elif attach_node == 'protein':
+                    self.data.append(attach_file)
                     self.protein.append('%s/clusterFiles/%s' % (directory, attach_file))
                 elif attach_node == 'active':
+                    self.data.append(attach_file)
                     self.active.append('%s/clusterFiles/%s' % (directory, attach_file))
         f.close()
         assert(len(self.mrna) > 0)
@@ -81,6 +90,7 @@ class ParadigmSetup:
             self.ipl.append('%s/merge_merged_unfiltered.tab' % (directory))
         elif os.path.exists('%s/merge_merged.tab' % (directory)):
             self.ipl.append('%s/merge_merged.tab' % (directory))
+        ## determine rows/columns from data files or user defined (optional)
         (self.features) = (None)
         for file in self.genome + self.mrna:
             if self.features == None:
@@ -97,8 +107,51 @@ class ParadigmSetup:
         if include_samples:
             self.samples = list(set(self.samples) & set(readList(include_samples)))
         self.samples.sort()
+        ## convert params file to version 1 if public
+        if self.public:
+            self.convertParams(self.params, self.data)
         #### should add a check that the feature and sample spaces match for all data
         #### files, which should be true for any valid Paradigm run
+        def convertParams(params_file, data_files):
+            f = open(params_file, "r")
+            file_header = f.readline().rstrip()
+            attribute_map = {}
+            for part in file_header.lstrip("> parameters ").lstrip("> ").split(" "):
+                parts = part.split("=")
+                attribute_map[parts[0]] = parts[1]
+            if "version" not in attribute_map:
+                attribute_map["version"] = "2"
+            if "version" == "1":
+                f.close()
+            elif "version" == "2":
+                data_indices = []
+                table_index = 0
+                header_map = {}
+                params_map = {}
+                for line in f:
+                    if line.startswith(">"):
+                        table_index += 1
+                        params_map[table_index] = []
+                        (child, parents) = line.rstrip().split(" ")[-1].split("=")
+                        if child in data_files:
+                            header_map[table_index] = "> child='%s' edge1='-obs>'\n" % (child)
+                            data_indices.append(table_index)
+                        else:
+                            header_map[table_index] = "> child='%s' edge1='-obs>'\n" % (child)
+                    else:
+                        params_map[table_index].append(line.rstrip())
+                f.close()
+                shutil.move(params_file, params_file + ".v%s" % attribute_map["version"])
+                attribute_map["version"] = "1"
+                o = open(params_file, "w")
+                o.write("> %s\n" % (" ".join(["=".join(list(item)) for item in attribute_map.items()])))
+                for data_index in data_indices:
+                    o.write(header_map[data_index])
+                    for index, param in enumerate(params_map[data_index]):
+                        first_index = index % 3
+                        second_index = (index - first_index)/3
+                        o.write("%s\t%s\t%s\n" % (first_index, second_index, param))
+                o.close()
 
 class Parameters:
     """
@@ -608,6 +661,41 @@ def computeFeatureScores(data_map, positive_samples, negative_samples, upstream_
                                                 alpha = 0.0,
                                                 return_df = False)
         return(score_map)
+	# def scoreSVM(matData, posSamples, negSamples):
+		# import liblinear
+		# import liblinearutil
+		# svmLabels = []
+		# svmData = []
+		# featureMap = {}
+		# for sample in (posSamples + negSamples):
+			# if sample in posSamples:
+				# svmLabels.append(1)
+			# else:
+				# svmLabels.append(-1)
+			# svmData.append({})
+			# for i, feature in enumerate(matData.keys()):
+				# if i+1 not in featureMap:
+					# featureMap[i+1] = feature
+				# try:
+					# svmData[-1][i+1] = float(matData[feature][sample])
+				# except ValueError:
+					# svmData[-1][i+1] = 0.0
+		# prob = liblinear.problem(svmLabels, svmData)
+		# param = liblinear.parameter('-s 3 -c 5 -q')
+		# liblinearutil.save_model('model_file', liblinearutil.train(prob, param))
+		# # m = liblinearutil.train(prob, param)
+		# # testLabels = [] ## like svmLabels
+		# # testData = [] ## like svmData
+		# # for i in range(len(testLabels)):
+		# #     x0, max_idx = gen_feature_nodearray(testData[i])
+		# #     label = liblinear.predict(m, x0)
+		# #     if label == testLabels[i]:
+		# #         print "correct!"
+		# weights = rList("model_file")[6:]
+		# scoreMap = {}
+		# for feature in featureMap.keys():
+			# scoreMap[featureMap[feature]] = float(weights[feature-1])
+		# return (scoreMap)
     def getScoreByGelNet(data_frame, positive_samples, negative_samples, upstream_pathway_map, downstream_pathway_map, l1 = 0.95, l2 = 0.05):
         """
         Refactoring of https://github.com/ucscCancer/pathway_tools/blob/master/scripts/diffuse.py [613be7d5baad339e8ddc852be6e10baff0cf8f9c]
@@ -2109,9 +2197,9 @@ def ps_main():
     parser.add_option('-s', '--samples', dest = 'include_samples', default = None, help = '')
     parser.add_option('-f', '--features', dest = 'include_features', default = None, help = '')
     parser.add_option('-n', '--null_size', dest = 'null_size', default = 30, help = '')
-    parser.add_option('-b', '--batchsize', dest = 'batch_size', default = 50, help = '')
-    parser.add_option('-g', '--pathway', dest = 'pathway_file', default = None, help = '')
-    parser.add_option('-p', '--public', action = 'store_true', dest = 'paradigm_public', default = False, help = '')
+    parser.add_option('-b', '--batch_size', dest = 'batch_size', default = 50, help = '')
+    parser.add_option('-p', '--pathway', dest = 'pathway_file', default = None, help = '')
+    parser.add_option('-y', '--public', action = 'store_true', dest = 'paradigm_public', default = False, help = '')
     parser.add_option('-z', '--seed', dest = 'seed', default = None, help = '')
     options, args = parser.parse_args()
     logger('Using Batch System : %s\n' % (options.batchSystem))
