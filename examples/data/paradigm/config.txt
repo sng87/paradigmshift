@@ -1,0 +1,4 @@
+pathway [max_in_degree=5,param_file=params.txt,interaction_map=reg.imap,dogma=reg.dogma]
+inference [method=BP,updates=SEQFIX,tol=1e-9,maxiter=1000,logdomain=1]
+evidence [suffix=tcgaLU_genome.tab,node=genome,disc=0.3333;0.6667,epsilon=0.01,epsilon0=0.2]
+evidence [suffix=tcgaLU_mRNA.tab,node=mRNA,disc=0.3333;0.6667,epsilon=0.01,epsilon0=0.2]

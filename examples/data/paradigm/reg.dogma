@@ -1,0 +1,6 @@
+genome	mRNA	-dTx>
+mRNA	protein	-dTl>
+protein	active	-dAct>
+txreg	mRNA	-cTx>
+tlreg	protein	-cTl>
+actreg	active	-cAct>

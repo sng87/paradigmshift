@@ -28,12 +28,12 @@ class ParadigmSetup:
     Stores relevant information for preparing Paradigm runs [paradigmSHIFT.py specific]
     Dependencies: returnColumns, returnRows, readList
     """
-    def __init__(self, directory, include_samples = None, null_size = 30, batch_size = 50, pathway_file = None, public = False):
+    def __init__(self, directory, include_samples = None, null_size = 30, batch_size = 50, pathway_file = None, paradigm_public = False):
         assert(os.path.exists('%s/clusterFiles' % (directory)))
         self.directory = directory
         self.null_size = null_size
         self.batch_size = batch_size
-        self.public = public
+        self.paradigm_public = paradigm_public
         ## locate config and params files
         (self.config, self.params) = (None, None)
         assert(os.path.exists('%s/config.txt' % (directory)))
@@ -110,12 +110,12 @@ class ParadigmSetup:
         if include_samples:
             self.samples = list(set(self.samples) & set(readList(include_samples)))
         self.samples.sort()
-        ## convert params file to version 1 if public
-        if self.public:
-            self.convertParams()
+        ## convert params file if needed
+        self.convertParams()
         #### should add a check that the feature and sample spaces match for all data
         #### files, which should be true for any valid Paradigm run
     def convertParams(self):
+        assert(not os.path.islink(self.params))
         f = open(self.params, "r")
         file_header = f.readline().rstrip()
         attribute_map = {}
@@ -123,39 +123,50 @@ class ParadigmSetup:
             parts = part.split("=")
             if len(parts) == 2:
                 attribute_map[parts[0]] = parts[1]
+        table_index = 0
+        header_map = {}
+        params_map = {}
+        for line in f:
+            if line.startswith(">"):
+                table_index += 1
+                header_map[table_index] = line.rstrip()
+                params_map[table_index] = []
+            else:
+                params_map[table_index].append(line.rstrip())
+        f.close()
+        
         if "version" not in attribute_map:
-            attribute_map["version"] = "2"
-        if attribute_map["version"] == "1":
-            f.close()
-        elif attribute_map["version"] == "2":
-            data_indices = []
-            table_index = 0
-            header_map = {}
-            params_map = {}
-            for line in f:
-                if line.startswith(">"):
-                    table_index += 1
-                    params_map[table_index] = []
-                    (child, parents) = line.rstrip().split(" ")[-1].split("=")
+            if len(filter(lambda x: x.startswith("> child"), header_map.values())) > 0:
+                attribute_map["version"] = "1"
+            else:
+                attribute_map["version"] = "2"
+        
+        if self.paradigm_public:
+            if attribute_map["version"] == "1":
+                pass
+            else:
+                shutil.move(self.params, self.params + ".v%s" % (attribute_map["version"]))
+                attribute_map["version"] = "1"
+                o = open(self.params, "w")
+                o.write("> %s\n" % (" ".join(["=".join(list(item)) for item in attribute_map.items()])))
+                for table_index in header_map:
+                    (child, parents) = header_map[table_index].split(" ")[-1].split("=")
                     if child in self.data:
-                        header_map[table_index] = "> child='%s' edge1='-obs>'\n" % (child)
-                        data_indices.append(table_index)
+                        o.write("> child='%s' edge1='-obs>'\n" % (child))
+                        for index, param in enumerate(params_map[table_index]):
+                            first_index = index % 3
+                            second_index = (index - first_index)/3
+                            o.write("%s\t%s\t%s\n" % (first_index, second_index, param))
                     else:
-                        header_map[table_index] = "> child='%s' edge1='-obs>'\n" % (child)
-                else:
-                    params_map[table_index].append(line.rstrip())
-            f.close()
-            shutil.move(self.params, self.params + ".v%s" % (attribute_map["version"]))
-            attribute_map["version"] = "1"
-            o = open(self.params, "w")
-            o.write("> %s\n" % (" ".join(["=".join(list(item)) for item in attribute_map.items()])))
-            for data_index in data_indices:
-                o.write(header_map[data_index])
-                for index, param in enumerate(params_map[data_index]):
-                    first_index = index % 3
-                    second_index = (index - first_index)/3
-                    o.write("%s\t%s\t%s\n" % (first_index, second_index, param))
-            o.close()
+                        pass
+                o.close()
+        else:
+            if attribute_map["version"] == "1":
+                shutil.move(self.params, self.params + ".v%s" % (attribute_map["version"]))
+                attribute_map["version"] = "2"
+                raise Exception("params file conversion to version 2 is currently not supported")
+            else:
+                pass
 
 class Parameters:
     """
@@ -1685,7 +1696,7 @@ class selectNeighborhood(Target):
             data_files = self.paradigm_setup.genome + self.paradigm_setup.mrna + self.paradigm_setup.protein + self.paradigm_setup.active
             upstream_features = list(set(selected_upstream.nodes.keys()) & set(self.paradigm_setup.features))
             downstream_features = list(set(selected_downstream.nodes.keys()) & set(self.paradigm_setup.features))
-            if self.paradigm_setup.public:
+            if self.paradigm_setup.paradigm_public:
                 if self.fold == 0:
                     generateBatchedData(self.analysis.focus_genes,
                                         upstream_features,
@@ -1774,7 +1785,7 @@ class runParadigm(Target):
             for null in range(1, self.null_size + 1):
                 self.addChildTarget(jtCmd('%s -p upstream_pathway.tab -c config.txt -b %s -o %s' % (paradigm_executable, 'data/up_N%s_' % (null), 'paradigm/N%s_%s_upstream.fa' % (null, self.analysis.focus_node)), self.directory, file = 'jobs.list'))
                 self.addChildTarget(jtCmd('%s -p downstream_pathway.tab -c config.txt -b %s -o %s' % (paradigm_executable, 'data/down_N%s_' % (null), 'paradigm/N%s_%s_downstream.fa' % (null, self.analysis.focus_node)), self.directory, file = 'jobs.list'))
-        elif self.paradigm_setup.public:
+        elif self.paradigm_setup.paradigm_public:
             os.mkdir('outputFiles')
             for b in range(batches):
                 self.addChildTarget(jtCmd('%s -p upstream_pathway.tab -c config.txt -b %s -o %s' % (paradigm_executable, 'data/up_b%s_%s_' % (b, batches), 'outputFiles/%s_upstream_b%s_%s.fa' % (self.analysis.focus_node, b, batches)), self.directory, file = 'jobs.list'))
@@ -2245,7 +2256,7 @@ def ps_main():
                                    null_size = int(options.null_size),
                                    batch_size = int(options.batch_size),
                                    pathway_file = options.pathway_file,
-                                   public = options.paradigm_public)
+                                   paradigm_public = options.paradigm_public)
     
     ## set pathway
     global_pathway = Pathway(paradigm_setup.pathway)
