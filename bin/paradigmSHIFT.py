@@ -3,7 +3,7 @@
 paradigmSHIFT.py
     by Sam Ng
 """
-import math, os, random, re, shutil, string, sys, types
+import logging, math, os, random, re, shutil, string, sys, types, zipfile
 from copy import deepcopy
 
 import pandas
@@ -12,6 +12,9 @@ import networkx
 from optparse import OptionParser
 from jobTree.scriptTree.target import Target
 from jobTree.scriptTree.stack import Stack
+
+## logger
+logging.basicConfig(filename="paradigm-shift.log", level=logging.INFO)
 
 ## executables
 bin_directory = os.path.dirname(os.path.abspath(__file__))
@@ -109,49 +112,50 @@ class ParadigmSetup:
         self.samples.sort()
         ## convert params file to version 1 if public
         if self.public:
-            self.convertParams(self.params, self.data)
+            self.convertParams()
         #### should add a check that the feature and sample spaces match for all data
         #### files, which should be true for any valid Paradigm run
-        def convertParams(params_file, data_files):
-            f = open(params_file, "r")
-            file_header = f.readline().rstrip()
-            attribute_map = {}
-            for part in file_header.lstrip("> parameters ").lstrip("> ").split(" "):
-                parts = part.split("=")
+    def convertParams(self):
+        f = open(self.params, "r")
+        file_header = f.readline().rstrip()
+        attribute_map = {}
+        for part in file_header.lstrip("> ").split(" "):
+            parts = part.split("=")
+            if len(parts) == 2:
                 attribute_map[parts[0]] = parts[1]
-            if "version" not in attribute_map:
-                attribute_map["version"] = "2"
-            if "version" == "1":
-                f.close()
-            elif "version" == "2":
-                data_indices = []
-                table_index = 0
-                header_map = {}
-                params_map = {}
-                for line in f:
-                    if line.startswith(">"):
-                        table_index += 1
-                        params_map[table_index] = []
-                        (child, parents) = line.rstrip().split(" ")[-1].split("=")
-                        if child in data_files:
-                            header_map[table_index] = "> child='%s' edge1='-obs>'\n" % (child)
-                            data_indices.append(table_index)
-                        else:
-                            header_map[table_index] = "> child='%s' edge1='-obs>'\n" % (child)
+        if "version" not in attribute_map:
+            attribute_map["version"] = "2"
+        if attribute_map["version"] == "1":
+            f.close()
+        elif attribute_map["version"] == "2":
+            data_indices = []
+            table_index = 0
+            header_map = {}
+            params_map = {}
+            for line in f:
+                if line.startswith(">"):
+                    table_index += 1
+                    params_map[table_index] = []
+                    (child, parents) = line.rstrip().split(" ")[-1].split("=")
+                    if child in self.data:
+                        header_map[table_index] = "> child='%s' edge1='-obs>'\n" % (child)
+                        data_indices.append(table_index)
                     else:
-                        params_map[table_index].append(line.rstrip())
-                f.close()
-                shutil.move(params_file, params_file + ".v%s" % attribute_map["version"])
-                attribute_map["version"] = "1"
-                o = open(params_file, "w")
-                o.write("> %s\n" % (" ".join(["=".join(list(item)) for item in attribute_map.items()])))
-                for data_index in data_indices:
-                    o.write(header_map[data_index])
-                    for index, param in enumerate(params_map[data_index]):
-                        first_index = index % 3
-                        second_index = (index - first_index)/3
-                        o.write("%s\t%s\t%s\n" % (first_index, second_index, param))
-                o.close()
+                        header_map[table_index] = "> child='%s' edge1='-obs>'\n" % (child)
+                else:
+                    params_map[table_index].append(line.rstrip())
+            f.close()
+            shutil.move(self.params, self.params + ".v%s" % (attribute_map["version"]))
+            attribute_map["version"] = "1"
+            o = open(self.params, "w")
+            o.write("> %s\n" % (" ".join(["=".join(list(item)) for item in attribute_map.items()])))
+            for data_index in data_indices:
+                o.write(header_map[data_index])
+                for index, param in enumerate(params_map[data_index]):
+                    first_index = index % 3
+                    second_index = (index - first_index)/3
+                    o.write("%s\t%s\t%s\n" % (first_index, second_index, param))
+            o.close()
 
 class Parameters:
     """
@@ -1387,7 +1391,7 @@ class queueAnalyses(Target):
         if len(self.analysis_list) > 0:
             analysis = self.analysis_list[0]
             if not os.path.exists('analysis/%s' % (analysis.directory)):
-                logger('Running analysis on %s (%s/%s)\n' % (analysis.analysis_name, self.run_analyses + 1, self.total_analyses), file = 'analysis/progress.log')
+                logger('Running analysis on %s (%s/%s)\n' % (analysis.analysis_name, self.run_analyses + 1, self.total_analyses), file = 'progress.log')
                 os.mkdir('analysis/%s' % (analysis.directory))
                 report_list.append(analysis.directory)
                 self.addChildTarget(branchFolds(analysis,
@@ -1396,7 +1400,7 @@ class queueAnalyses(Target):
                                                 self.parameters,
                                                 self.directory))
             else:
-                logger('Already performed analysis on %s (%s/%s)\n' % (analysis.analysis_name, self.run_analyses + 1, self.total_analyses), file = 'analysis/progress.log')
+                logger('Already performed analysis on %s (%s/%s)\n' % (analysis.analysis_name, self.run_analyses + 1, self.total_analyses), file = 'progress.log')
             self.setFollowOnTarget(queueAnalyses(self.analysis_list[1:],
                                                  self.paradigm_setup,
                                                  self.global_pathway,
@@ -1433,7 +1437,7 @@ class branchAnalyses(Target):
             os.mkdir('analysis')
         for analysis in self.analysis_list:
             if not os.path.exists('analysis/%s' % (analysis.directory)):
-                logger('Running analysis on %s (%s/%s)\n' % (analysis.analysis_name, self.run_analyses + 1, self.total_analyses), file = 'analysis/progress.log')
+                logger('Running analysis on %s (%s/%s)\n' % (analysis.analysis_name, self.run_analyses + 1, self.total_analyses), file = 'progress.log')
                 os.mkdir('analysis/%s' % (analysis.directory))
                 report_list.append(analysis.directory)
                 self.addChildTarget(branchFolds(analysis,
@@ -1442,7 +1446,7 @@ class branchAnalyses(Target):
                                                 self.parameters,
                                                 self.directory))
             else:
-                logger('Already performed analysis on %s (%s/%s)\n' % (analysis.analysis_name, self.run_analyses + 1, self.total_analyses), file = 'analysis/progress.log')
+                logger('Already performed analysis on %s (%s/%s)\n' % (analysis.analysis_name, self.run_analyses + 1, self.total_analyses), file = 'progress.log')
             self.run_analyses += 1
         if self.parameters.report_directory != None:
             self.setFollowOnTarget(makeReport(report_list,
@@ -2155,7 +2159,7 @@ class makeReport(Target):
         self.directory = directory
     def run(self):
         os.chdir(self.directory)
-        logger('... Done\n', file = 'analysis/progress.log')
+        logger('... Done\n', file = 'progress.log')
         
         if not os.path.exists(self.report_directory):
             os.mkdir('%s' % (self.report_directory))
@@ -2187,36 +2191,56 @@ class makeReport(Target):
 def ps_main():
     ## check for fresh run
     if os.path.exists('.jobTree'):
-        logger('ERROR: .jobTree directory found, remove it first to start a fresh run\n', die = True)
+        logging.warning("WARNING: '.jobTree' directory found, remove it first to start a fresh run\n")
     
     ## parse arguments
-    parser = OptionParser(usage = '%prog [options] paradigm_directory analysis_file')
+    parser = OptionParser(usage = "%prog [options] paradigm_directory analysis_file")
     Stack.addJobTreeOptions(parser)
-    parser.add_option('--jobFile', help = 'Add as child of jobFile rather than new jobTree')
-    parser.add_option('-c', '--config', dest = 'config_file', default = None, help = '')
-    parser.add_option('-s', '--samples', dest = 'include_samples', default = None, help = '')
-    parser.add_option('-f', '--features', dest = 'include_features', default = None, help = '')
-    parser.add_option('-n', '--null_size', dest = 'null_size', default = 30, help = '')
-    parser.add_option('-b', '--batch_size', dest = 'batch_size', default = 50, help = '')
-    parser.add_option('-p', '--pathway', dest = 'pathway_file', default = None, help = '')
-    parser.add_option('-y', '--public', action = 'store_true', dest = 'paradigm_public', default = False, help = '')
-    parser.add_option('-z', '--seed', dest = 'seed', default = None, help = '')
-    options, args = parser.parse_args()
-    logger('Using Batch System : %s\n' % (options.batchSystem))
+    parser.add_option("--jobFile",
+                      help = "Add as a child of jobFile rather than making a new jobTree")
+    parser.add_option("-w", "--workdir", dest = "work_dir", default = "./",
+                      help = "Directory to perform work in")
+    parser.add_option("-c", "--config", dest = "config_file", default = None,
+                      help = "Configuration file with user defined optional arguments")
+    parser.add_option("-s", "--samples", dest = "include_samples", default = None,
+                      help = "One column file of samples to analyze")
+    parser.add_option("-f", "--features", dest = "include_features", default = None,
+                      help = "One column file of features to analyze")
+    parser.add_option("-n", "--null_size", dest = "null_size", default = 30,
+                      help = "Number of null samples to estimate shift significance")
+    parser.add_option("-b", "--batch_size", dest = "batch_size", default = 50,
+                      help = "Number of samples in each paradigm run per compute node")
+    parser.add_option("-p", "--pathway", dest = "pathway_file", default = None,
+                      help = "Path to paradigm pathway file")
+    parser.add_option("-y", "--public", dest = "paradigm_public", action = "store_true", default = False,
+                      help = "This flag must be enabled when using the publicly available version of paradigm")
+    parser.add_option("-z", "--seed", dest = "seed", default = None,
+                      help = "Random seed used for null generation")
     
-    if len(args) == 1:
-        if args[0] == 'clean':
-            command = 'rm -rf .jobTree analysis report'
-            logger(command)
-            os.system(command)
-            sys.exit(0)
+    options, args = parser.parse_args()
+    logging.info("options: %s" % (str(options)))
+    print "Using Batch System '%s'" % (options.batchSystem)
     
     assert(len(args) == 2)
-    paradigm_directory = os.path.abspath(args[0])
+    paradigm_directory = args[0]
     analysis_file = args[1]
     
-    ## set Paradigm files
-    paradigm_setup = ParadigmSetup(paradigm_directory.rstrip('/'),
+    work_dir = os.path.abspath(options.work_dir)
+    if not os.path.exists(work_dir):
+        os.makedirs(work_dir)
+    
+    ## set paradigm directory files
+    if zipfile.is_zipfile(paradigm_directory):
+        zf = zipfile.ZipFile(paradigm_directory, "r")
+        paradigm_directory = os.path.join(work_dir, "paradigm")
+        zf.extractall(paradigm_directory)
+        zf.close()
+    elif os.path.isdir(paradigm_directory):
+        paradigm_directory = os.path.abspath(paradigm_directory)
+    else:
+        logging.error("ERROR: paradigm directory cannot be a regular file\n")
+        sys.exit(1)
+    paradigm_setup = ParadigmSetup(paradigm_directory.rstrip("/"),
                                    include_samples = options.include_samples,
                                    null_size = int(options.null_size),
                                    batch_size = int(options.batch_size),
@@ -2262,6 +2286,10 @@ def ps_main():
                     continue
             if len(altered.positive_samples) >= parameters.min_alterations:
                 altered_list.append(altered)
+            else:
+                logger('Insufficient alterations to run analysis on %s\n' % (",".join(altered.focus_genes)), file = 'progress.log')
+        else:
+            logger('Insufficient pathway connections to run analysis on %s\n' % (",".join(altered.focus_genes)), file = 'progress.log')
     f.close()
     
     ## run
