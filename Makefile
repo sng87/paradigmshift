@@ -5,7 +5,7 @@ PATHMARK_GIT = git://github.com/ucscCancer/pathmark-scripts.git
 
 all : init.sh init.csh
 
-init.sh : bin/circlePlot.py
+init.sh : bin/paradigm bin/circlePlot.py
 	echo export PATH=${THISDIR}/bin:\$${PATH} > init.sh
 	echo if [ -n "\$${PYTHONPATH+x}" ] >> init.sh
 	echo then >> init.sh
@@ -14,13 +14,16 @@ init.sh : bin/circlePlot.py
 	echo export PYTHONPATH=${THISDIR}/bin >> init.sh
 	echo fi >> init.sh
 
-init.csh : bin/circlePlot.py
+init.csh : bin/paradigm bin/circlePlot.py
 	echo setenv PATH ${THISDIR}/bin:\$${PATH} > init.csh
 	echo if \$$?PYTHONPATH then >> init.csh
 	echo setenv PYTHONPATH ${THISDIR}/bin:\$${PYTHONPATH} >> init.csh
 	echo else >> init.csh
 	echo setenv PYTHONPATH ${THISDIR}/bin >> init.csh
 	echo endif >> init.csh
+
+bin/paradigm : paradigm-scripts
+	ln -s $$PWD/paradigm-scripts/bin/paradigm bin/paradigm
 
 bin/circlePlot.py : paradigm-scripts
 	ln -s $$PWD/paradigm-scripts/bin/circlePlot.py bin/circlePlot.py

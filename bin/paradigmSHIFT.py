@@ -15,8 +15,7 @@ from jobTree.scriptTree.stack import Stack
 
 ## executables
 bin_directory = os.path.dirname(os.path.abspath(__file__))
-# paradigm_executable = os.path.join(bin_directory, "paradigm")
-paradigm_executable = "paradigm"
+paradigm_executable = os.path.join(bin_directory, "paradigm")
 circleplot_executable = os.path.join(bin_directory, "circlePlot.py")
 
 ## classes
@@ -2121,11 +2120,11 @@ class generateOutput(Target):
         os.chdir(ps_directory)
         
         ## copy tables
-        os.system("cp final/param_%s/significance.tab significance.tab" % ("_".join(self.best_parameters)))
-        os.system("cp final/param_%s/pshift.tab pshift.tab" % ("_".join(self.best_parameters)))
-        os.system("cp final/param_%s/wildtype_shifts.tab wildtype_shifts.tab" % ("_".join(self.best_parameters)))
-        os.system("cp final/param_%s/combined_pathway.tab combined_pathway.tab" % ("_".join(self.best_parameters)))
-        # os.system("cp final/param_%s/normalized_pshift.tab normalized_pshift.tab" % ("_".join(self.best_parameters)))
+        shutil.copy("final/param_%s/significance.tab" % ("_".join(self.best_parameters)), "significance.tab")
+        shutil.copy("final/param_%s/pshift.tab" % ("_".join(self.best_parameters)), "pshift.tab")
+        shutil.copy("final/param_%s/wildtype_shifts.tab" % ("_".join(self.best_parameters)), "wildtype_shifts.tab")
+        shutil.copy("final/param_%s/combined_pathway.tab" % ("_".join(self.best_parameters)), "combined_pathway.tab")
+        shutil.copy("final/param_%s/normalized_pshift.tab" % ("_".join(self.best_parameters)), "normalized_pshift.tab")
         
         ## output m-separation and significance plots
         os.system("mseparation.R %s final/param_%s/positive.scores final/param_%s/negative.scores" % (self.analysis.focus_node,
