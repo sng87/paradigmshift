@@ -15,9 +15,9 @@ from jobTree.scriptTree.stack import Stack
 
 ## executables
 bin_directory = os.path.dirname(os.path.abspath(__file__))
-# paradigm_executable = os.path.join(bin_directory, 'paradigm')
-paradigm_executable = 'paradigm'
-circleplot_executable = os.path.join(bin_directory, 'circlePlot.py')
+# paradigm_executable = os.path.join(bin_directory, "paradigm")
+paradigm_executable = "paradigm"
+circleplot_executable = os.path.join(bin_directory, "circlePlot.py")
 
 ## classes
 class ParadigmSetup:
@@ -26,31 +26,31 @@ class ParadigmSetup:
     Dependencies: returnColumns, returnRows, readList
     """
     def __init__(self, directory, include_samples = None, null_size = 30, batch_size = 50, pathway_file = None, paradigm_public = False):
-        assert(os.path.exists('%s/clusterFiles' % (directory)))
+        assert(os.path.exists("%s/clusterFiles" % (directory)))
         self.directory = directory
         self.null_size = null_size
         self.batch_size = batch_size
         self.paradigm_public = paradigm_public
         ## locate config and params files
         (self.config, self.params) = (None, None)
-        assert(os.path.exists('%s/config.txt' % (directory)))
-        assert(os.path.exists('%s/params.txt' % (directory)))
-        self.config = '%s/config.txt' % (directory)
-        self.params = '%s/params.txt' % (directory)
+        assert(os.path.exists("%s/config.txt" % (directory)))
+        assert(os.path.exists("%s/params.txt" % (directory)))
+        self.config = "%s/config.txt" % (directory)
+        self.params = "%s/params.txt" % (directory)
         ## locate imap and dogma files (optional)
         (self.imap, self.dogma) = (None, None)
         for file in os.listdir(directory):
-            if file.endswith('.imap'):
-                self.imap = '%s/%s' % (directory, file)
-            elif file.endswith('.dogma'):
-                self.dogma = '%s/%s' % (directory, file)
+            if file.endswith(".imap"):
+                self.imap = "%s/%s" % (directory, file)
+            elif file.endswith(".dogma"):
+                self.dogma = "%s/%s" % (directory, file)
         ## locate pathway file or set user defined pathway file (optional)
         (self.pathway) = (None)
         if pathway_file is None:
-            for file in os.listdir('%s/clusterFiles' % (directory)):
-                if file.endswith('pathway.tab'):
+            for file in os.listdir("%s/clusterFiles" % (directory)):
+                if file.endswith("pathway.tab"):
                     assert(self.pathway == None)
-                    self.pathway = '%s/clusterFiles/%s' % (directory, file)
+                    self.pathway = "%s/clusterFiles/%s" % (directory, file)
         else:
             assert(os.path.exists(pathway_file))
             self.pathway = os.path.abspath(pathway_file) 
@@ -58,38 +58,38 @@ class ParadigmSetup:
         ## locate data files from config file and clusterFiles directory
         self.data = []
         (self.genome, self.mrna, self.protein, self.active, self.ipl) = ([], [], [], [], [])
-        f = open(self.config, 'r')
+        f = open(self.config, "r")
         for line in f:
             if line.isspace():
                 continue
-            if line.startswith('evidence'):
-                tokens = line.lstrip('evidence [').rstrip(']').split(',')
+            if line.startswith("evidence"):
+                tokens = line.lstrip("evidence [").rstrip("]").split(",")
                 attach_node = None
                 attach_file = None
                 for token in tokens:
-                    parts = token.split('=')
-                    if parts[0] == 'node':
+                    parts = token.split("=")
+                    if parts[0] == "node":
                         attach_node = parts[1]
-                    elif parts[0] == 'suffix':
+                    elif parts[0] == "suffix":
                         attach_file = parts[1]
-                if attach_node == 'genome':
+                if attach_node == "genome":
                     self.data.append(attach_file)
-                    self.genome.append('%s/clusterFiles/%s' % (directory, attach_file))
-                elif attach_node == 'mRNA':
+                    self.genome.append("%s/clusterFiles/%s" % (directory, attach_file))
+                elif attach_node == "mRNA":
                     self.data.append(attach_file)
-                    self.mrna.append('%s/clusterFiles/%s' % (directory, attach_file))
-                elif attach_node == 'protein':
+                    self.mrna.append("%s/clusterFiles/%s" % (directory, attach_file))
+                elif attach_node == "protein":
                     self.data.append(attach_file)
-                    self.protein.append('%s/clusterFiles/%s' % (directory, attach_file))
-                elif attach_node == 'active':
+                    self.protein.append("%s/clusterFiles/%s" % (directory, attach_file))
+                elif attach_node == "active":
                     self.data.append(attach_file)
-                    self.active.append('%s/clusterFiles/%s' % (directory, attach_file))
+                    self.active.append("%s/clusterFiles/%s" % (directory, attach_file))
         f.close()
         assert(len(self.mrna) > 0)
-        if os.path.exists('%s/merge_merged_unfiltered.tab' % (directory)):
-            self.ipl.append('%s/merge_merged_unfiltered.tab' % (directory))
-        elif os.path.exists('%s/merge_merged.tab' % (directory)):
-            self.ipl.append('%s/merge_merged.tab' % (directory))
+        if os.path.exists("%s/merge_merged_unfiltered.tab" % (directory)):
+            self.ipl.append("%s/merge_merged_unfiltered.tab" % (directory))
+        elif os.path.exists("%s/merge_merged.tab" % (directory)):
+            self.ipl.append("%s/merge_merged.tab" % (directory))
         ## determine rows/columns from data files or user defined (optional)
         (self.features) = (None)
         for file in self.genome + self.mrna:
@@ -178,49 +178,49 @@ class Parameters:
         self.search_distance = 2
         self.threshold = [0.84]
         self.cost = [0.0]
-        self.selection_method = ['tt']
+        self.selection_method = ["tt"]
         self.model_directory = None
         self.cross_validation = True
         self.cross_validation_two_sided = False
         self.cross_validation_threshold = 0.55
-        self.separation_method = 'tt'
-        self.report_directory = 'report'
+        self.separation_method = "tt"
+        self.report_directory = "report"
     def importConfig(self, config_file):
-        f = open(config_file, 'r')
+        f = open(config_file, "r")
         for line in f:
             if line.isspace():
                 continue
-            pline = line.rstrip().split('\t')
-            if line.startswith('search_distance'):
+            pline = line.rstrip().split("\t")
+            if line.startswith("search_distance"):
                 self.search_distance = int(pline[1])
-            elif line.startswith('threshold'):
-                self.threshold = [float(item) for item in pline[1].split(',')]
-            elif line.startswith('cost'):
-                self.cost = [float(item) for item in pline[1].split(',')]
-            elif line.startswith('selection') or line.startswith('selection_method'):
-                self.selection_method = [item for item in pline[1].split(',')]
-            elif line.startswith('model'):
-                self.model_directory = pline[1].rstrip('/')
-            elif line.startswith('cv') or line.startswith('cross_validation'):
+            elif line.startswith("threshold"):
+                self.threshold = [float(item) for item in pline[1].split(",")]
+            elif line.startswith("cost"):
+                self.cost = [float(item) for item in pline[1].split(",")]
+            elif line.startswith("selection") or line.startswith("selection_method"):
+                self.selection_method = [item for item in pline[1].split(",")]
+            elif line.startswith("model"):
+                self.model_directory = pline[1].rstrip("/")
+            elif line.startswith("cv") or line.startswith("cross_validation"):
                 self.cross_validation = bool(int(pline[1]))
-            elif line.startswith('msep') or line.startswith('separation_method'):
+            elif line.startswith("msep") or line.startswith("separation_method"):
                 self.separation_method = pline[1]
-            elif line.startswith('report'):
-                self.report_directory = pline[1].rstrip('/')
+            elif line.startswith("report"):
+                self.report_directory = pline[1].rstrip("/")
         f.close()
     def setSeed(self, seed_input = None):
         if seed_input is None:
             self.random_seed = random.randint(0, 999999999)
         else:
             if os.path.exists(seed_input):
-                f = open(seed_input, 'r')
+                f = open(seed_input, "r")
                 self.random_seed = int(f.readline().rstrip())
                 f.close()
             else:
                 self.random_seed = int(seed_input)
     def printSeed(self):
-        o = open('seed.log', 'w')
-        o.write('%s\n' % (self.random_seed))
+        o = open("seed.log", "w")
+        o.write("%s\n" % (self.random_seed))
         o.close()
 
 class Alterations:
@@ -230,13 +230,13 @@ class Alterations:
     def __init__(self, analysis_name, focus_genes, all_samples, positive_samples, negative_samples = None):
         self.analysis_name = analysis_name
         self.focus_genes = focus_genes
-        self.focus_node = '_'.join(self.focus_genes)
+        self.focus_node = "_".join(self.focus_genes)
         self.positive_samples = list(set(positive_samples) & set(all_samples))
         if negative_samples:
             self.negative_samples = list(set(negative_samples) & set(all_samples))
         else:
             self.negative_samples = list(set(all_samples) - set(positive_samples))
-        self.directory = re.compile('[\W_]+').sub('_', analysis_name)
+        self.directory = re.compile("[\W_]+").sub("_", analysis_name)
     def getProportion(self):
         return(float(len(self.positive_samples))/float(len(self.positive_samples) + len(self.negative_samples)))
 
@@ -447,7 +447,7 @@ def readList(input_file, header = False):
     Reads in a simple one column list [2014-3-1]
     """
     input_list = []
-    f = open(input_file, 'r')
+    f = open(input_file, "r")
     if header:
         f.readline()
     for line in f:
@@ -467,7 +467,7 @@ def getFullNeighborhood(focus_genes, global_pathway, search_distance = 2):
             return(group_index)
         focus_complexes = []
         for target in global_pathway.interactions[focus_gene]:
-            if global_pathway.interactions[focus_gene][target] == 'component>':
+            if global_pathway.interactions[focus_gene][target] == "component>":
                 focus_complexes.append(target)
         seen_complexes = set()
         grouped_complexes = []
@@ -482,7 +482,7 @@ def getFullNeighborhood(focus_genes, global_pathway, search_distance = 2):
                 current_node = border_nodes.pop(0)
                 if current_node in global_pathway.interactions:
                     for target in global_pathway.interactions[current_node]:
-                        if global_pathway.interactions[current_node][target] == 'component>' and global_pathway.nodes[target] == 'complex' and target not in seen_complexes:
+                        if global_pathway.interactions[current_node][target] == "component>" and global_pathway.nodes[target] == "complex" and target not in seen_complexes:
                             current_group.append(target)
                             border_nodes.append(target)
                             seen_complexes.update([target])
@@ -503,21 +503,21 @@ def getFullNeighborhood(focus_genes, global_pathway, search_distance = 2):
                     for source in reversed_interactions[current_node]:
                         if source == focus_gene:
                             continue
-                        elif global_pathway.nodes[source] == 'abstract':
+                        elif global_pathway.nodes[source] == "abstract":
                             continue
                         elif distance == 1:
-                            if reversed_interactions[current_node][source] == 'component>':
-                                if global_pathway.nodes[source] == 'complex' and source not in seen_nodes:
+                            if reversed_interactions[current_node][source] == "component>":
+                                if global_pathway.nodes[source] == "complex" and source not in seen_nodes:
                                     border_nodes.append(source)
                                     seen_nodes.update([source])
-                                elif global_pathway.nodes[source] == 'protein' or global_pathway.nodes[source] == 'family':
+                                elif global_pathway.nodes[source] == "protein" or global_pathway.nodes[source] == "family":
                                     upstream_pathway.nodes[source] = global_pathway.nodes[source]
                                     if source not in upstream_pathway.interactions:
                                         upstream_pathway.interactions[source] = {}
-                                    upstream_pathway.interactions[source][focus_gene] = '-a>'
+                                    upstream_pathway.interactions[source][focus_gene] = "-a>"
                                     frontier_nodes.append(source)
                                     seen_nodes.update([source])
-                            elif reversed_interactions[current_node][source].startswith('-a') or reversed_interactions[current_node][source].startswith('-t'):
+                            elif reversed_interactions[current_node][source].startswith("-a") or reversed_interactions[current_node][source].startswith("-t"):
                                 upstream_pathway.nodes[source] = global_pathway.nodes[source]
                                 if source not in upstream_pathway.interactions:
                                     upstream_pathway.interactions[source] = {}
@@ -548,12 +548,12 @@ def getFullNeighborhood(focus_genes, global_pathway, search_distance = 2):
                     for target in global_pathway.interactions[current_node]:
                         if target == focus_gene:
                             continue
-                        elif global_pathway.nodes[target] == 'abstract':
+                        elif global_pathway.nodes[target] == "abstract":
                             continue
                         elif distance == 1:
-                            if global_pathway.interactions[current_node][target] == 'component>':
+                            if global_pathway.interactions[current_node][target] == "component>":
                                 continue
-                            elif global_pathway.interactions[current_node][target].startswith('-a') or global_pathway.interactions[current_node][target].startswith('-t'):
+                            elif global_pathway.interactions[current_node][target].startswith("-a") or global_pathway.interactions[current_node][target].startswith("-t"):
                                 downstream_pathway.nodes[target] = global_pathway.nodes[target]
                                 if focus_gene not in downstream_pathway.interactions:
                                     downstream_pathway.interactions[focus_gene] = {}
@@ -606,7 +606,7 @@ def getRelevantPaths(focus_genes, upstream_pathway, downstream_pathway, search_d
             all_paths = upstream_pathway.getAllPaths(node, focus_gene, search_distance)
             legal_paths = []        ## upstream paths must start with a protein
             for path in all_paths:
-                if upstream_pathway.nodes[path[0][0]] == 'protein':
+                if upstream_pathway.nodes[path[0][0]] == "protein":
                     legal_paths.append(path)
             if len(legal_paths) > 0:
                 if node not in upstream_path_map:
@@ -619,7 +619,7 @@ def getRelevantPaths(focus_genes, upstream_pathway, downstream_pathway, search_d
             all_paths = downstream_pathway.getAllPaths(focus_gene, node, search_distance)
             legal_paths = []        ## downstream paths must end with a protein and a transcriptional edge
             for path in all_paths:
-                if downstream_pathway.nodes[path[-1][2]] == 'protein' and path[-1][1].startswith('-t'):
+                if downstream_pathway.nodes[path[-1][2]] == "protein" and path[-1][1].startswith("-t"):
                     legal_paths.append(path)
             if len(legal_paths) > 0:
                 if node not in downstream_path_map:
@@ -646,7 +646,7 @@ def computeFeatureRanks(score_map):
             rank_map[attachment][feature] = float(index + 1)/len(ranked_features)
     return(rank_map)
 
-def computeFeatureScores(data_map, positive_samples, negative_samples, upstream_pathway_map, downstream_pathway_map, method = 'variance'):
+def computeFeatureScores(data_map, positive_samples, negative_samples, upstream_pathway_map, downstream_pathway_map, method = "variance"):
     def getScoreByVariance(data_frame, all_samples):
         score_map = {}
         for feature in data_frame.columns:
@@ -680,8 +680,8 @@ def computeFeatureScores(data_map, positive_samples, negative_samples, upstream_
                 except ValueError:
                     svmData[-1][index + 1] = 0.0
         prob = liblinear.problem(svm_labels, svm_data)
-        param = liblinear.parameter('-s 3 -c 5 -q')
-        liblinearutil.save_model('model_file', liblinearutil.train(prob, param))
+        param = liblinear.parameter("-s 3 -c 5 -q")
+        liblinearutil.save_model("model_file", liblinearutil.train(prob, param))
         # m = liblinearutil.train(prob, param)
         # testLabels = [] #like svmLabels
         # testData = [] #like svmData
@@ -711,9 +711,9 @@ def computeFeatureScores(data_map, positive_samples, negative_samples, upstream_
                 self.kernel = None
                 self.labels = None
             def readKernel(self, kernel_file):
-                self.kernel = coo_matrix(genfromtxt(kernel_file, delimiter = '\t')[1:, 1:])
-                f = open(kernel_file, 'r')
-                self.labels = f.readline().rstrip().split('\t')[1:]
+                self.kernel = coo_matrix(genfromtxt(kernel_file, delimiter = "\t")[1:, 1:])
+                f = open(kernel_file, "r")
+                self.labels = f.readline().rstrip().split("\t")[1:]
                 f.close()
             def makeKernel(self, networkx_graph, diffusion_time = 0.1):
                 ## parse the network, build the graph laplacian
@@ -726,9 +726,9 @@ def computeFeatureScores(data_map, positive_samples, negative_samples, upstream_
                     index2node[i] = node_order[i]
                     node2index[node_order[i]] = i
                 ## construct the diagonals
-                row = array('i')
-                col = array('i')
-                data = array('f')
+                row = array("i")
+                col = array("i")
+                data = array("f")
                 for i in range(0, num_nodes):
                     ## diag entries: out degree
                     degree = 0
@@ -761,7 +761,7 @@ def computeFeatureScores(data_map, positive_samples, negative_samples, upstream_
                 for i,j,v in zip(cx.row, cx.col, cx.data):
                     a = self.index2node[i]
                     b = self.index2node[j]
-                    print '\t'.join([a,b,str(v)])
+                    print "\t".join([a,b,str(v)])
             def parseGraph(self, networkx_graph):
                 edges = set()
                 nodes = set()
@@ -796,7 +796,7 @@ def computeFeatureScores(data_map, positive_samples, negative_samples, upstream_
                         heats[target] = 0.0
                 return(heats)
             def writeKernel(self, output_file):
-                o = open(output_file, 'w')
+                o = open(output_file, "w")
                 cx = self.kernel.tocoo()
                 edges = {}
                 for i, j, v in zip(cx.row, cx.col, cx.data):
@@ -805,16 +805,16 @@ def computeFeatureScores(data_map, positive_samples, negative_samples, upstream_
                     edges[(a, b)] = str(v)
                 ## iterate through rows
                 ## sort labels in alphabetical order
-                o.write('Key\t' + '\t'.join(sorted(self.labels)) + '\n')
+                o.write("Key\t" + "\t".join(sorted(self.labels)) + "\n")
                 for nodeA in sorted(self.labels):
                     printstr = nodeA
                     ## through columns
                     for nodeB in sorted(self.labels):
                         if (nodeA, nodeB) in edges:
-                            printstr += '\t' + edges[(nodeA, nodeB)]
+                            printstr += "\t" + edges[(nodeA, nodeB)]
                         else:
-                            printstr += '\t0'
-                    o.write(printstr + '\n')
+                            printstr += "\t0"
+                    o.write(printstr + "\n")
                 o.close()
             def kernelMultiplyOne(self, vector):
                 array = []
@@ -854,31 +854,31 @@ def computeFeatureScores(data_map, positive_samples, negative_samples, upstream_
             class_map[sample] = 1
         for sample in negative_samples:
             class_map[sample] = 0
-        class_vector = pandas.DataFrame(pandas.Series(class_map), columns = ['class'])
+        class_vector = pandas.DataFrame(pandas.Series(class_map), columns = ["class"])
         sample_intersection = list(set(class_vector.index) & set(data_frame.index))
         sample_intersection.sort()
         upstream_score_map = {}
         for focus_gene in upstream_pathway_map:
             heat_kernel = SciPYKernel()
             heat_kernel.makeKernel(upstream_pathway_map[focus_gene].networkx())
-            heat_vector = pandas.DataFrame(pandas.Series(heat_kernel.getRow(focus_gene)), columns = ['heat'])
+            heat_vector = pandas.DataFrame(pandas.Series(heat_kernel.getRow(focus_gene)), columns = ["heat"])
             weight_vector = ((heat_vector/max(heat_vector.icol(0))) - 1.0).abs()**8
-            weight_vector.columns = ['weight']
+            weight_vector.columns = ["weight"]
             feature_intersection = list(set(weight_vector.index) & set(data_frame.columns) - set([focus_gene]))
             feature_intersection.sort()
             penalty_matrix = pandas.DataFrame(identity(len(feature_intersection)))
             penalty_matrix.columns = feature_intersection
             penalty_matrix.index = feature_intersection
-            data_frame[feature_intersection].loc[sample_intersection].to_csv('data.X.matrix', sep = '\t', index_label = 'id', na_rep = 0)
-            class_vector.loc[sample_intersection].to_csv('class.y.vector', sep = '\t', index_label = 'id')
-            weight_vector.loc[feature_intersection].to_csv('weight.d.vector', sep = '\t', index_label = 'id')
-            penalty_matrix.to_csv('penalty.P.matrix', sep = '\t', index_label = 'id')
-            os.system('Rscript ~/bin/paradigmshift/bin/gelnet.R')
-            f = open('gelnet.w.vector', 'r')
+            data_frame[feature_intersection].loc[sample_intersection].to_csv("data.X.matrix", sep = "\t", index_label = "id", na_rep = 0)
+            class_vector.loc[sample_intersection].to_csv("class.y.vector", sep = "\t", index_label = "id")
+            weight_vector.loc[feature_intersection].to_csv("weight.d.vector", sep = "\t", index_label = "id")
+            penalty_matrix.to_csv("penalty.P.matrix", sep = "\t", index_label = "id")
+            os.system("Rscript ~/bin/paradigmshift/bin/gelnet.R")
+            f = open("gelnet.w.vector", "r")
             for line in f:
                 if line.isspace():
                     continue
-                pline = line.rstrip().split('\t')
+                pline = line.rstrip().split("\t")
                 if pline[0] not in upstream_score_map:
                     upstream_score_map[pline[0]] = abs(float(pline[1]))
                 else:
@@ -888,24 +888,24 @@ def computeFeatureScores(data_map, positive_samples, negative_samples, upstream_
         for focus_gene in downstream_pathway_map:
             heat_kernel = SciPYKernel()
             heat_kernel.makeKernel(downstream_pathway_map[focus_gene].networkx())
-            heat_vector = pandas.DataFrame(pandas.Series(heat_kernel.getRow(focus_gene)), columns = ['heat'])
+            heat_vector = pandas.DataFrame(pandas.Series(heat_kernel.getRow(focus_gene)), columns = ["heat"])
             weight_vector = ((heat_vector/max(heat_vector.icol(0))) - 1.0).abs()**8
-            weight_vector.columns = ['weight']
+            weight_vector.columns = ["weight"]
             feature_intersection = list(set(weight_vector.index) & set(data_frame.columns) - set([focus_gene]))
             feature_intersection.sort()
             penalty_matrix = pandas.DataFrame(identity(len(feature_intersection)))
             penalty_matrix.columns = feature_intersection
             penalty_matrix.index = feature_intersection
-            data_frame[feature_intersection].loc[sample_intersection].groupby(level=0, axis=0).mean().to_csv('data.X.matrix', sep = '\t', index_label = 'id', na_rep = 0)
-            class_vector.loc[sample_intersection].to_csv('class.y.vector', sep = '\t', index_label = 'id')
-            weight_vector.loc[feature_intersection].to_csv('weight.d.vector', sep = '\t', index_label = 'id')
-            penalty_matrix.to_csv('penalty.P.matrix', sep = '\t', index_label = 'id')
-            os.system('Rscript ~/bin/paradigmshift/bin/gelnet.R')
-            f = open('gelnet.w.vector', 'r')
+            data_frame[feature_intersection].loc[sample_intersection].groupby(level=0, axis=0).mean().to_csv("data.X.matrix", sep = "\t", index_label = "id", na_rep = 0)
+            class_vector.loc[sample_intersection].to_csv("class.y.vector", sep = "\t", index_label = "id")
+            weight_vector.loc[feature_intersection].to_csv("weight.d.vector", sep = "\t", index_label = "id")
+            penalty_matrix.to_csv("penalty.P.matrix", sep = "\t", index_label = "id")
+            os.system("Rscript ~/bin/paradigmshift/bin/gelnet.R")
+            f = open("gelnet.w.vector", "r")
             for line in f:
                 if line.isspace():
                     continue
-                pline = line.rstrip().split('\t')
+                pline = line.rstrip().split("\t")
                 if pline[0] not in downstream_score_map:
                     downstream_score_map[pline[0]] = abs(float(pline[1]))
                 else:
@@ -927,16 +927,16 @@ def computeFeatureScores(data_map, positive_samples, negative_samples, upstream_
     all_samples = list(set(positive_samples) | set(negative_samples))
     score_map = {}
     for attachment in data_map:
-        if method == 'variance':
+        if method == "variance":
             score_map[attachment] = getScoreByVariance(data_map[attachment], all_samples)
-        elif method == 'tt':
+        elif method == "tt":
             score_map[attachment] = getScoreByWelchsTT(data_map[attachment], positive_samples, negative_samples)
-        elif method == 'gelnet':
+        elif method == "gelnet":
             score_map[attachment] = getScoreByGelNet(data_map[attachment], positive_samples, negative_samples, upstream_pathway_map, downstream_pathway_map, l1 = 0.95, l2 = 0.05)
     score_frame = pandas.DataFrame(score_map)
-    score_frame.to_csv('feature.scores', sep = '\t', na_rep = 'NA')
+    score_frame.to_csv("feature.scores", sep = "\t", na_rep = "NA")
     
-    if method in ['gelnet']:
+    if method in ["gelnet"]:
         return(score_map)
     else:
         return(computeFeatureRanks(score_map))
@@ -958,13 +958,13 @@ def collapsePath(path, max_distance = 2):
     collapsed_path = [(path[0][0], collapsed_interaction, collapsed_node), (collapsed_node, path[len(path) - max_distance + 1][1], path[len(path) - max_distance + 1][2])] + path[len(path) - max_distance + 2:]
     return(collapsed_path)
 
-def getSelectedNeighborhood(focus_node, focus_genes, data_map, positive_samples, negative_samples, upstream_path_map, downstream_path_map, upstream_pathway_map, downstream_pathway_map, base_upstream_pathway, base_downstream_pathway, threshold = 0.84, cost = 0.0, method = 'variance' , max_distance = 2):
+def getSelectedNeighborhood(focus_node, focus_genes, data_map, positive_samples, negative_samples, upstream_path_map, downstream_path_map, upstream_pathway_map, downstream_pathway_map, base_upstream_pathway, base_downstream_pathway, threshold = 0.84, cost = 0.0, method = "variance" , max_distance = 2):
     def getUpstreamValue(feature, value_map):
         value_list = []
-        if 'mrna' in value_map:
-            if feature in value_map['mrna']:
+        if "mrna" in value_map:
+            if feature in value_map["mrna"]:
                 try:
-                    fval = abs(float(value_map['mrna'][feature]))
+                    fval = abs(float(value_map["mrna"][feature]))
                     if fval != fval:
                         raise ValueError
                 except ValueError:
@@ -972,10 +972,10 @@ def getSelectedNeighborhood(focus_node, focus_genes, data_map, positive_samples,
             else:
                 fval = 0
             value_list.append(fval)
-        if 'active' in value_map:
-            if feature in value_map['active']:
+        if "active" in value_map:
+            if feature in value_map["active"]:
                 try:
-                    fval = abs(float(value_map['active'][feature]))
+                    fval = abs(float(value_map["active"][feature]))
                     if fval != fval:
                         raise ValueError
                 except ValueError:
@@ -986,10 +986,10 @@ def getSelectedNeighborhood(focus_node, focus_genes, data_map, positive_samples,
         return(max(value_list))
     def getDownstreamValue(feature, value_map):
         value_list = []
-        if 'mrna' in value_map:
-            if feature in value_map['mrna']:
+        if "mrna" in value_map:
+            if feature in value_map["mrna"]:
                 try:
-                    fval = abs(float(value_map['mrna'][feature]))
+                    fval = abs(float(value_map["mrna"][feature]))
                     if fval != fval:
                         raise ValueError
                 except ValueError:
@@ -1001,15 +1001,15 @@ def getSelectedNeighborhood(focus_node, focus_genes, data_map, positive_samples,
     
     score_map = computeFeatureScores(data_map, positive_samples, negative_samples, upstream_pathway_map, downstream_pathway_map, method = method)
     l = open("selection.log", "w")
-    l.write('## upstream neighborhood\n')
+    l.write("## upstream neighborhood\n")
     selected_upstream_pathway = Pathway( ({}, {}) )
     for focus_gene in focus_genes:
         selected_upstream_pathway.nodes[focus_gene] = base_upstream_pathway.nodes[focus_gene]
     if len(focus_genes) > 1:
-        selected_upstream_pathway.nodes[focus_node] = 'abstract'
+        selected_upstream_pathway.nodes[focus_node] = "abstract"
         for focus_gene in focus_genes:
             selected_upstream_pathway.interactions[focus_gene] = {}
-            selected_upstream_pathway.interactions[focus_gene][focus_node] = '-ap>'
+            selected_upstream_pathway.interactions[focus_gene][focus_node] = "-ap>"
     selected_upstream_features = []
     ranked_upstream_features = []
     for feature in upstream_path_map:
@@ -1019,7 +1019,7 @@ def getSelectedNeighborhood(focus_node, focus_genes, data_map, positive_samples,
     if len(ranked_upstream_features) > 0:
         while (len(selected_upstream_features) < 4) or (getUpstreamValue(ranked_upstream_features[0], score_map) > threshold + cost*len(selected_upstream_features)):
             current_feature = ranked_upstream_features.pop(0)
-            l.write('%s\t%s\t%s\t%s\n' % (current_feature, getUpstreamValue(current_feature, score_map), len(selected_upstream_features), upstream_path_map[current_feature]))
+            l.write("%s\t%s\t%s\t%s\n" % (current_feature, getUpstreamValue(current_feature, score_map), len(selected_upstream_features), upstream_path_map[current_feature]))
             selected_upstream_features.append(current_feature)
             for path in upstream_path_map[current_feature]:
                 collapsed_path = collapsePath(path, max_distance = max_distance)
@@ -1039,15 +1039,15 @@ def getSelectedNeighborhood(focus_node, focus_genes, data_map, positive_samples,
                     selected_upstream_pathway.interactions[edge[0]][edge[2]] = edge[1]
             if len(ranked_upstream_features) == 0:
                 break
-    l.write('## downstream neighborhood\n')
+    l.write("## downstream neighborhood\n")
     selected_downstream_pathway = Pathway( ({}, {}) )
     for focus_gene in focus_genes:
         selected_downstream_pathway.nodes[focus_gene] = base_downstream_pathway.nodes[focus_gene]
     if len(focus_genes) > 1:
-        selected_downstream_pathway.nodes[focus_node] = 'abstract'
+        selected_downstream_pathway.nodes[focus_node] = "abstract"
         selected_downstream_pathway.interactions[focus_node] = {}
         for focus_gene in focus_genes:
-            selected_downstream_pathway.interactions[focus_node][focus_gene] = '-ap>'
+            selected_downstream_pathway.interactions[focus_node][focus_gene] = "-ap>"
     selected_downstream_features = []
     ranked_downstream_features = []
     for feature in downstream_path_map:
@@ -1057,7 +1057,7 @@ def getSelectedNeighborhood(focus_node, focus_genes, data_map, positive_samples,
     if len(ranked_downstream_features) > 0:
         while (len(selected_downstream_features) < 4) or (getDownstreamValue(ranked_downstream_features[0], score_map) > threshold + cost*len(selected_downstream_features)):
             current_feature = ranked_downstream_features.pop(0)
-            l.write('%s\t%s\t%s\t%s\n' % (current_feature, getDownstreamValue(current_feature, score_map), len(selected_downstream_features), downstream_path_map[current_feature]))
+            l.write("%s\t%s\t%s\t%s\n" % (current_feature, getDownstreamValue(current_feature, score_map), len(selected_downstream_features), downstream_path_map[current_feature]))
             selected_downstream_features.append(current_feature)
             for path in downstream_path_map[current_feature]:
                 collapsed_path = collapsePath(path, max_distance = max_distance)
@@ -1098,16 +1098,16 @@ def generateData(focus_genes, upstream_features, downstream_features, allow_feat
     """
     random.seed(random_seed)
     for file in data_files:
-        data_frame = pandas.read_csv(file, sep = '\t', index_col = 0)
+        data_frame = pandas.read_csv(file, sep = "\t", index_col = 0)
         output_features = list(set(data_frame.columns) & (set(upstream_features) | set(downstream_features)))
         output_samples = include_samples
-        data_frame[output_features].loc[output_samples].transpose().to_csv('data/transposed_%s' % (file.split('/')[-1]), sep = '\t', na_rep = 'NA', index_label = 'genes')
+        data_frame[output_features].loc[output_samples].transpose().to_csv("data/transposed_%s" % (file.split("/")[-1]), sep = "\t", na_rep = "NA", index_label = "genes")
         output_features = list(set(data_frame.columns) & set(upstream_features))
         output_samples = include_samples
-        data_frame[output_features].loc[output_samples].to_csv('data/up_%s' % (file.split('/')[-1]), sep = '\t', na_rep = 'NA', index_label = 'samples')
+        data_frame[output_features].loc[output_samples].to_csv("data/up_%s" % (file.split("/")[-1]), sep = "\t", na_rep = "NA", index_label = "samples")
         output_features = list((set(data_frame.columns) & set(downstream_features)) - set(focus_genes))
         output_samples = include_samples
-        data_frame[output_features].loc[output_samples].to_csv('data/down_%s' % (file.split('/')[-1]), sep = '\t', na_rep = 'NA', index_label = 'samples')
+        data_frame[output_features].loc[output_samples].to_csv("data/down_%s" % (file.split("/")[-1]), sep = "\t", na_rep = "NA", index_label = "samples")
     for null in range(1, null_size + 1):
         feature_pool = list((set(upstream_features) | set(downstream_features)) - set(focus_genes))
         permute_pool = list(set(allow_features) - set(feature_pool) - set(focus_genes))
@@ -1115,19 +1115,19 @@ def generateData(focus_genes, upstream_features, downstream_features, allow_feat
         for permute in zip(feature_pool, random.sample(permute_pool, len(feature_pool))):
             permute_map[permute[0]] = permute[1]
         for file in data_files:
-            data_frame = pandas.read_csv(file, sep = '\t', index_col = 0)
+            data_frame = pandas.read_csv(file, sep = "\t", index_col = 0)
             output_features = list(set(data_frame.columns) & set(upstream_features))
             output_samples = include_samples
             permute_features = [permute_map[feature] for feature in output_features]
             permute_data_frame = data_frame[permute_features].loc[output_samples].copy()
             permute_data_frame.columns = output_features
-            permute_data_frame.to_csv('data/up_N%s_%s' % (null, file.split('/')[-1]), sep = '\t', na_rep = 'NA', index_label = 'samples')
+            permute_data_frame.to_csv("data/up_N%s_%s" % (null, file.split("/")[-1]), sep = "\t", na_rep = "NA", index_label = "samples")
             output_features = list((set(data_frame.columns) & set(downstream_features)) - set(focus_genes))
             output_samples = include_samples
             permute_features = [permute_map[feature] for feature in output_features]
             permute_data_frame = data_frame[permute_features].loc[output_samples].copy()
             permute_data_frame.columns = output_features
-            permute_data_frame.to_csv('data/down_N%s_%s' % (null, file.split('/')[-1]), sep = '\t', na_rep = 'NA', index_label = 'samples')
+            permute_data_frame.to_csv("data/down_N%s_%s" % (null, file.split("/")[-1]), sep = "\t", na_rep = "NA", index_label = "samples")
 
 def generateBatchedData(focus_genes, upstream_features, downstream_features, allow_features, include_samples, data_files, null_size = 0, batch_size = 50, random_seed = 1):
     """
@@ -1136,20 +1136,20 @@ def generateBatchedData(focus_genes, upstream_features, downstream_features, all
     """
     random.seed(random_seed)
     for file in data_files:
-        data_frame = pandas.read_csv(file, sep = '\t', index_col = 0)
+        data_frame = pandas.read_csv(file, sep = "\t", index_col = 0)
         output_features = list(set(data_frame.columns) & (set(upstream_features) | set(downstream_features)))
         output_samples = include_samples
-        data_frame[output_features].loc[output_samples].transpose().to_csv('data/transposed_%s' % (file.split('/')[-1]), sep = '\t', na_rep = 'NA', index_label = 'genes')
+        data_frame[output_features].loc[output_samples].transpose().to_csv("data/transposed_%s" % (file.split("/")[-1]), sep = "\t", na_rep = "NA", index_label = "genes")
         batches = getBatchCount(len(include_samples), batch_size = batch_size)
         chunker = getChunks(include_samples, batch_size = batch_size)
         for b in range(batches):
             current_chunk = chunker.next()
             output_features = list(set(data_frame.columns) & set(upstream_features))
             output_samples = current_chunk
-            data_frame[output_features].loc[output_samples].to_csv('data/up_b%s_%s_%s' % (b, batches, file.split('/')[-1]), sep = '\t', na_rep = 'NA', index_label = 'samples')
+            data_frame[output_features].loc[output_samples].to_csv("data/up_b%s_%s_%s" % (b, batches, file.split("/")[-1]), sep = "\t", na_rep = "NA", index_label = "samples")
             output_features = list((set(data_frame.columns) & set(downstream_features)) - set(focus_genes))
             output_samples = current_chunk
-            data_frame[output_features].loc[output_samples].to_csv('data/down_b%s_%s_%s' % (b, batches, file.split('/')[-1]), sep = '\t', na_rep = 'NA', index_label = 'samples')
+            data_frame[output_features].loc[output_samples].to_csv("data/down_b%s_%s_%s" % (b, batches, file.split("/")[-1]), sep = "\t", na_rep = "NA", index_label = "samples")
     for null in range(1, null_size + 1):
         feature_pool = list((set(upstream_features) | set(downstream_features)) - set(focus_genes))
         permute_pool = list(set(allow_features) - set(feature_pool) - set(focus_genes))
@@ -1157,7 +1157,7 @@ def generateBatchedData(focus_genes, upstream_features, downstream_features, all
         for permute in zip(feature_pool, random.sample(permute_pool, len(feature_pool))):
             permute_map[permute[0]] = permute[1]
         for file in data_files:
-            data_frame = pandas.read_csv(file, sep = '\t', index_col = 0)
+            data_frame = pandas.read_csv(file, sep = "\t", index_col = 0)
             batches = getBatchCount(len(include_samples), batch_size = batch_size)
             chunker = getChunks(include_samples, batch_size = batch_size)
             for b in range(batches):
@@ -1167,13 +1167,13 @@ def generateBatchedData(focus_genes, upstream_features, downstream_features, all
                 permute_features = [permute_map[feature] for feature in output_features]
                 permute_data_frame = data_frame[permute_features].loc[output_samples].copy()
                 permute_data_frame.columns = output_features
-                permute_data_frame .to_csv('data/up_N%s_b%s_%s_%s' % (null, b, batches, file.split('/')[-1]), sep = '\t', na_rep = 'NA', index_label = 'samples')
+                permute_data_frame .to_csv("data/up_N%s_b%s_%s_%s" % (null, b, batches, file.split("/")[-1]), sep = "\t", na_rep = "NA", index_label = "samples")
                 output_features = list((set(data_frame.columns) & set(downstream_features)) - set(focus_genes))
                 output_samples = current_chunk
                 permute_features = [permute_map[feature] for feature in output_features]
                 permute_data_frame = data_frame[permute_features].loc[output_samples].copy()
                 permute_data_frame.columns = output_features
-                permute_data_frame .to_csv('data/down_N%s_b%s_%s_%s' % (null, b, batches, file.split('/')[-1]), sep = '\t', na_rep = 'NA', index_label = 'samples')
+                permute_data_frame .to_csv("data/down_N%s_b%s_%s_%s" % (null, b, batches, file.split("/")[-1]), sep = "\t", na_rep = "NA", index_label = "samples")
 
 def readParadigm(input_file, include_features = None):
     """
@@ -1181,7 +1181,7 @@ def readParadigm(input_file, include_features = None):
     """
     likelihood_map = {}
     ipl_map = {}
-    f = open(input_file, 'r')
+    f = open(input_file, "r")
     for line in f:
         if line.isspace():
             continue
@@ -1191,7 +1191,7 @@ def readParadigm(input_file, include_features = None):
             likelihood_map[sample] = float(pline[3])
             ipl_map[sample] = {}
         else:
-            pline = line.rstrip().split('\t')
+            pline = line.rstrip().split("\t")
             feature = pline[0]
             if include_features != None:
                 if feature not in include_features:
@@ -1216,7 +1216,7 @@ def convertListToFloat(input_list):
             continue
     return(float_list)
 
-def computeMean(input_list, null = 'NA', return_sd = False, sample_sd = True):
+def computeMean(input_list, null = "NA", return_sd = False, sample_sd = True):
     """
     Computes mean and optionally the sd [2014-3-1]
     Dependencies: convertListToFloat
@@ -1290,7 +1290,7 @@ def computeAUC(ranked_features, score_map, classification_map):
             tpr = tp/float(tp+fn)
             fpr = fp/float(fp+tn)
         except ZeroDivisionError:
-            return('NA', [])
+            return("NA", [])
         points.append( (fpr, tpr) )
         if fpr > x:
             dx = fpr - x
@@ -1319,16 +1319,16 @@ def computeWelchsT(values_1, values_2, alpha = 0.0, return_df = False):
     try:
         t_statistic = (mean_1 - mean_2)/(math.sqrt((sd_1**2)/len(values_1) + (sd_2**2)/len(values_2)) + alpha)
     except ZeroDivisionError:
-        t_statistic = 'NA'
+        t_statistic = "NA"
     except TypeError:
-        t_statistic = 'NA'
+        t_statistic = "NA"
     if return_df:
         df = (((sd_1**2)/len(values_1) + (sd_2**2)/len(values_2))**2)/((((sd_1**2)/len(values_1))**2)/(len(values_1) - 1) + (((sd_2**2)/len(values_2))**2)/(len(values_2) - 1))
         return(t_statistic, df)
     else:
         return(t_statistic)
 
-def computeSeparation(positive_samples, negative_samples, pshift_map, method = 'tt'):
+def computeSeparation(positive_samples, negative_samples, pshift_map, method = "tt"):
     """
     Computes the separation statistic for a Paradigm-Shift run [Paradigm-Shift specific]
     Dependencies: computeWelchsT, computeMean
@@ -1336,16 +1336,16 @@ def computeSeparation(positive_samples, negative_samples, pshift_map, method = '
     positive_values = []
     negative_values = []
     for sample in positive_samples + negative_samples:
-        if pshift_map[sample] == 'NA':
+        if pshift_map[sample] == "NA":
             continue
         if sample in positive_samples:
             positive_values.append(pshift_map[sample])
         elif sample in negative_samples:
             negative_values.append(pshift_map[sample])
-    if method == 'tt':
+    if method == "tt":
         separation_statistic = computeWelchsT(positive_values, negative_values)
     else:
-        separation_statistic = 'NA'
+        separation_statistic = "NA"
     return(separation_statistic)
 
 ## jt classes
@@ -1358,8 +1358,8 @@ class jtCmd(Target):
     def run(self):
         os.chdir(self.directory)
         if self.file:
-            o = open(self.file, 'a')
-            o.write('%s\n' % (self.command))
+            o = open(self.file, "a")
+            o.write("%s\n" % (self.command))
             o.close()
         os.system(self.command)
 
@@ -1389,13 +1389,13 @@ class queueAnalyses(Target):
         if self.total_analyses is None:
             self.run_analyses = 0
             self.total_analyses = len(self.analysis_list)
-        if not os.path.exists('analysis'):
-            os.mkdir('analysis')
+        if not os.path.exists("analysis"):
+            os.mkdir("analysis")
         if len(self.analysis_list) > 0:
             analysis = self.analysis_list[0]
-            if not os.path.exists('analysis/%s' % (analysis.directory)):
-                logger.info('Starting analysis on %s [%s/%s]\n' % (analysis.analysis_name, self.run_analyses + 1, self.total_analyses))
-                os.mkdir('analysis/%s' % (analysis.directory))
+            if not os.path.exists("analysis/%s" % (analysis.directory)):
+                logger.info("Starting analysis on %s [%s/%s]\n" % (analysis.analysis_name, self.run_analyses + 1, self.total_analyses))
+                os.mkdir("analysis/%s" % (analysis.directory))
                 report_list.append(analysis.directory)
                 self.addChildTarget(branchFolds(analysis,
                                                 self.paradigm_setup,
@@ -1403,7 +1403,7 @@ class queueAnalyses(Target):
                                                 self.parameters,
                                                 self.directory))
             else:
-                logger.info('Already completed analysis on %s [%s/%s]\n' % (analysis.analysis_name, self.run_analyses + 1, self.total_analyses))
+                logger.info("Already completed analysis on %s [%s/%s]\n" % (analysis.analysis_name, self.run_analyses + 1, self.total_analyses))
                 pass
             self.setFollowOnTarget(queueAnalyses(self.analysis_list[1:],
                                                  self.paradigm_setup,
@@ -1444,12 +1444,12 @@ class branchAnalyses(Target):
         if self.total_analyses is None:
             self.run_analyses = 0
             self.total_analyses = len(self.analysis_list)
-        if not os.path.exists('analysis'):
-            os.mkdir('analysis')
+        if not os.path.exists("analysis"):
+            os.mkdir("analysis")
         for analysis in self.analysis_list:
-            if not os.path.exists('analysis/%s' % (analysis.directory)):
-                logger.info('Starting analysis on %s [%s/%s]\n' % (analysis.analysis_name, self.run_analyses + 1, self.total_analyses))
-                os.mkdir('analysis/%s' % (analysis.directory))
+            if not os.path.exists("analysis/%s" % (analysis.directory)):
+                logger.info("Starting analysis on %s [%s/%s]\n" % (analysis.analysis_name, self.run_analyses + 1, self.total_analyses))
+                os.mkdir("analysis/%s" % (analysis.directory))
                 report_list.append(analysis.directory)
                 self.addChildTarget(branchFolds(analysis,
                                                 self.paradigm_setup,
@@ -1458,7 +1458,7 @@ class branchAnalyses(Target):
                                                 self.directory))
             else:
                 pass
-                logger.info('Already completed analysis on %s [%s/%s]\n' % (analysis.analysis_name, self.run_analyses + 1, self.total_analyses))
+                logger.info("Already completed analysis on %s [%s/%s]\n" % (analysis.analysis_name, self.run_analyses + 1, self.total_analyses))
             self.run_analyses += 1
         if self.parameters.report_directory != None:
             self.setFollowOnTarget(makeReport(report_list,
@@ -1474,7 +1474,7 @@ class branchFolds(Target):
         self.parameters = parameters
         self.directory = directory
     def run(self):
-        ps_directory = '%s/analysis/%s' % (self.directory, self.analysis.directory)
+        ps_directory = "%s/analysis/%s" % (self.directory, self.analysis.directory)
         os.chdir(ps_directory)
         random.seed(self.parameters.random_seed+123454321)
         
@@ -1496,7 +1496,7 @@ class branchFolds(Target):
             for round in range(1, self.parameters.n_rounds + 1):
                 for fold in range(1, self.parameters.m_folds + 1):
                     fold_index = (round - 1)*self.parameters.m_folds + fold
-                    os.mkdir('fold%s' % (fold_index))
+                    os.mkdir("fold%s" % (fold_index))
                     self.addChildTarget(branchParameters(fold_index,
                                                          self.analysis,
                                                          fold_map[round][fold],
@@ -1506,7 +1506,7 @@ class branchFolds(Target):
                                                          self.directory))
         
         ## run final
-        os.mkdir('final')
+        os.mkdir("final")
         self.setFollowOnTarget(branchParameters(0,
                                                 self.analysis,
                                                 self.paradigm_setup.samples,
@@ -1527,10 +1527,10 @@ class branchParameters(Target):
         self.directory = directory
     def run(self):
         if self.fold == 0:
-            ps_directory = '%s/analysis/%s/final' % (self.directory, self.analysis.directory)
+            ps_directory = "%s/analysis/%s/final" % (self.directory, self.analysis.directory)
             os.chdir(ps_directory)
         else:
-            ps_directory = '%s/analysis/%s/fold%s' % (self.directory, self.analysis.directory, self.fold)
+            ps_directory = "%s/analysis/%s/fold%s" % (self.directory, self.analysis.directory, self.fold)
             os.chdir(ps_directory)
         
         ## average cross validation aucs for final run
@@ -1541,37 +1541,37 @@ class branchParameters(Target):
             for round in range(1, self.parameters.n_rounds + 1):
                 for fold in range(1, self.parameters.m_folds + 1):
                     fold_index = (round - 1)*self.parameters.m_folds + fold
-                    if os.path.exists('../fold%s/auc.tab' % (fold_index)):
-                        f = open('../fold%s/auc.tab' % (fold_index), 'r')
+                    if os.path.exists("../fold%s/auc.tab" % (fold_index)):
+                        f = open("../fold%s/auc.tab" % (fold_index), "r")
                         line = f.readline()
                         f.close()
-                        (auc_train, auc_test, auc_params) = line.rstrip().split('\t')
+                        (auc_train, auc_test, auc_params) = line.rstrip().split("\t")
                     else:
-                        (auc_train, auc_test, auc_params) = ('---', '---', '---')
+                        (auc_train, auc_test, auc_params) = ("---", "---", "---")
                     auc_list.append(auc_test)
-                    auc_lines.append('%s\t%s\t%s\t%s' % (fold_index, auc_train, auc_test, auc_params))
+                    auc_lines.append("%s\t%s\t%s\t%s" % (fold_index, auc_train, auc_test, auc_params))
             auc_average = computeMean(auc_list)
-            o = open('../average_auc.tab', 'w')
-            o.write('> %s\tMean(AUC) = %s\n' % (self.analysis.analysis_name, auc_average))
-            o.write('# fold\ttrain\ttest\tparameters\n')
-            o.write('%s\n' % ('\n'.join(auc_lines)))
+            o = open("../average_auc.tab", "w")
+            o.write("> %s\tMean(AUC) = %s\n" % (self.analysis.analysis_name, auc_average))
+            o.write("# fold\ttrain\ttest\tparameters\n")
+            o.write("%s\n" % ("\n".join(auc_lines)))
             o.close()
             if self.parameters.cross_validation:
-                if auc_average == 'NA':
-                    os.chdir('..')
-                    shutil.rmtree('final')
+                if auc_average == "NA":
+                    os.chdir("..")
+                    shutil.rmtree("final")
                     for round in range(1, self.parameters.n_rounds + 1):
                         for fold in range(1, self.parameters.m_folds + 1):
                             fold_index = (round - 1)*self.parameters.m_folds + fold
-                            shutil.rmtree('fold%s' % (fold_index))
+                            shutil.rmtree("fold%s" % (fold_index))
                     return
                 elif auc_average < self.parameters.cross_validation_threshold:
-                    os.chdir('..')
-                    shutil.rmtree('final')
+                    os.chdir("..")
+                    shutil.rmtree("final")
                     for round in range(1, self.parameters.n_rounds + 1):
                         for fold in range(1, self.parameters.m_folds + 1):
                             fold_index = (round - 1)*self.parameters.m_folds + fold
-                            shutil.rmtree('fold%s' % (fold_index))
+                            shutil.rmtree("fold%s" % (fold_index))
                     return
         
         ## branch parameters
@@ -1579,7 +1579,7 @@ class branchParameters(Target):
             for cost in self.parameters.cost:
                 for method in self.parameters.selection_method:
                     current_parameters = [threshold, cost, method]
-                    os.mkdir('param_%s' % ('_'.join([str(parameter) for parameter in current_parameters])))
+                    os.mkdir("param_%s" % ("_".join([str(parameter) for parameter in current_parameters])))
                     self.addChildTarget(selectNeighborhood(self.fold,
                                                            self.analysis,
                                                            self.training_samples,
@@ -1608,24 +1608,24 @@ class selectNeighborhood(Target):
         self.directory = directory
     def run(self):
         if self.fold == 0:
-            ps_directory = '%s/analysis/%s/final/param_%s' % (self.directory, self.analysis.directory, '_'.join([str(parameter) for parameter in self.current_parameters]))
+            ps_directory = "%s/analysis/%s/final/param_%s" % (self.directory, self.analysis.directory, "_".join([str(parameter) for parameter in self.current_parameters]))
             os.chdir(ps_directory)
         else:
-            ps_directory = '%s/analysis/%s/fold%s/param_%s' % (self.directory, self.analysis.directory, self.fold, '_'.join([str(parameter) for parameter in self.current_parameters]))
+            ps_directory = "%s/analysis/%s/fold%s/param_%s" % (self.directory, self.analysis.directory, self.fold, "_".join([str(parameter) for parameter in self.current_parameters]))
             os.chdir(ps_directory)
         
         ## use trained model if it exists
         selected_upstream = None
         selected_downstream = None
         if self.parameters.model_directory is not None:
-            model_path = ''
-            if self.parameters.model_directory.startswith('/'):
-                model_path = '%s/%s' % (self.parameters.model_directory, self.analysis.focus_node)
+            model_path = ""
+            if self.parameters.model_directory.startswith("/"):
+                model_path = "%s/%s" % (self.parameters.model_directory, self.analysis.focus_node)
             else:
-                model_path = '%s/%s/%s' % (self.directory, self.parameters.model_directory, self.analysis.focus_node)
-            if (os.path.exists('%s/upstream_pathway.tab' % (model_path))) and (os.path.exists('%s/downstream_pathway.tab' % (model_path))):
-                selected_upstream = Pathway('%s/upstream_pathway.tab' % (model_path))
-                selected_downstream = Pathway('%s/downstream_pathway.tab' % (model_path))
+                model_path = "%s/%s/%s" % (self.directory, self.parameters.model_directory, self.analysis.focus_node)
+            if (os.path.exists("%s/upstream_pathway.tab" % (model_path))) and (os.path.exists("%s/downstream_pathway.tab" % (model_path))):
+                selected_upstream = Pathway("%s/upstream_pathway.tab" % (model_path))
+                selected_downstream = Pathway("%s/downstream_pathway.tab" % (model_path))
                 selection_pass = True
         
         ## get upstream and downstream base neighborhoods per complex, then combine
@@ -1643,8 +1643,8 @@ class selectNeighborhood(Target):
                 for index in group_pathways[focus_gene]:
                     upstream_pathway_map[focus_gene].appendPathway(group_pathways[focus_gene][index][0])
                     downstream_pathway_map[focus_gene].appendPathway(group_pathways[focus_gene][index][1])
-                upstream_pathway_map[focus_gene].writeSPF('upstream_base.%s.tab' % (focus_gene))
-                downstream_pathway_map[focus_gene].writeSPF('downstream_base.%s.tab' % (focus_gene))
+                upstream_pathway_map[focus_gene].writeSPF("upstream_base.%s.tab" % (focus_gene))
+                downstream_pathway_map[focus_gene].writeSPF("downstream_base.%s.tab" % (focus_gene))
             
             ## identify all interaction paths relevant to the Paradigm-Shift task
             base_upstream_pathway = Pathway( ({}, {}) )
@@ -1660,9 +1660,9 @@ class selectNeighborhood(Target):
             ## score and select features
             data_map = {}
             assert(len(self.paradigm_setup.mrna) > 0)
-            data_map['mrna'] = pandas.read_csv(self.paradigm_setup.mrna[0], sep = '\t', index_col = 0)
+            data_map["mrna"] = pandas.read_csv(self.paradigm_setup.mrna[0], sep = "\t", index_col = 0)
             if len(self.paradigm_setup.active) > 0:
-                data_map['active'] = pandas.read_csv(self.paradigm_setup.active[0], sep = '\t', index_col = 0)
+                data_map["active"] = pandas.read_csv(self.paradigm_setup.active[0], sep = "\t", index_col = 0)
             positive_samples = list(set(self.training_samples) & set(self.analysis.positive_samples))
             negative_samples = list(set(self.training_samples) & set(self.analysis.negative_samples))
             (selected_upstream, selected_downstream, selection_pass) = getSelectedNeighborhood(self.analysis.focus_node,
@@ -1681,11 +1681,11 @@ class selectNeighborhood(Target):
                                                    method = self.current_parameters[2])
         
         if not selection_pass:
-            o = open('auc.tab', 'w')
-            o.write('---\t---\n')
+            o = open("auc.tab", "w")
+            o.write("---\t---\n")
             o.close()
         else:
-            os.mkdir('data')
+            os.mkdir("data")
             data_files = self.paradigm_setup.genome + self.paradigm_setup.mrna + self.paradigm_setup.protein + self.paradigm_setup.active
             upstream_features = list(set(selected_upstream.nodes.keys()) & set(self.paradigm_setup.features))
             downstream_features = list(set(selected_downstream.nodes.keys()) & set(self.paradigm_setup.features))
@@ -1729,12 +1729,12 @@ class selectNeighborhood(Target):
                                  data_files,
                                  null_size = 0,
                                  random_seed = self.parameters.random_seed + self.fold)
-            selected_upstream.writeSPF('upstream_pathway.tab')
-            selected_downstream.writeSPF('downstream_pathway.tab')
+            selected_upstream.writeSPF("upstream_pathway.tab")
+            selected_downstream.writeSPF("downstream_pathway.tab")
             selected_combined = Pathway( ({}, {}) )
             selected_combined.appendPathway(selected_upstream)
             selected_combined.appendPathway(selected_downstream)
-            selected_combined.writeSPF('combined_pathway.tab')
+            selected_combined.writeSPF("combined_pathway.tab")
             if self.fold == 0:
                 self.addChildTarget(runParadigm(self.analysis,
                                                 self.paradigm_setup,
@@ -1764,39 +1764,39 @@ class runParadigm(Target):
             self.null_size = null_size
     def run(self):
         os.chdir(self.directory)
-        os.mkdir('paradigm')
+        os.mkdir("paradigm")
         
         ## copy paradigm files
-        os.system('cp %s .' % (self.paradigm_setup.config))
-        os.system('cp %s .' % (self.paradigm_setup.params))
+        os.system("cp %s ." % (self.paradigm_setup.config))
+        os.system("cp %s ." % (self.paradigm_setup.params))
         if self.paradigm_setup.dogma:
-            os.system('cp %s .' % (self.paradigm_setup.dogma))
+            os.system("cp %s ." % (self.paradigm_setup.dogma))
         if self.paradigm_setup.imap:
-            os.system('cp %s .' % (self.paradigm_setup.imap))
+            os.system("cp %s ." % (self.paradigm_setup.imap))
         ## run Paradigm (real and null)
         batches = getBatchCount(len(self.paradigm_setup.samples), batch_size = self.paradigm_setup.batch_size)
         if batches == 0:
-            self.addChildTarget(jtCmd('%s -p upstream_pathway.tab -c config.txt -b %s -o %s' % (paradigm_executable, 'data/up_', 'paradigm/%s_upstream.fa' % (self.analysis.focus_node)), self.directory, file = 'jobs.list'))
-            self.addChildTarget(jtCmd('%s -p downstream_pathway.tab -c config.txt -b %s -o %s' % (paradigm_executable, 'data/down_', 'paradigm/%s_downstream.fa' % (self.analysis.focus_node)), self.directory, file = 'jobs.list'))
+            self.addChildTarget(jtCmd("%s -p upstream_pathway.tab -c config.txt -b %s -o %s" % (paradigm_executable, "data/up_", "paradigm/%s_upstream.fa" % (self.analysis.focus_node)), self.directory, file = "jobs.list"))
+            self.addChildTarget(jtCmd("%s -p downstream_pathway.tab -c config.txt -b %s -o %s" % (paradigm_executable, "data/down_", "paradigm/%s_downstream.fa" % (self.analysis.focus_node)), self.directory, file = "jobs.list"))
             for null in range(1, self.null_size + 1):
-                self.addChildTarget(jtCmd('%s -p upstream_pathway.tab -c config.txt -b %s -o %s' % (paradigm_executable, 'data/up_N%s_' % (null), 'paradigm/N%s_%s_upstream.fa' % (null, self.analysis.focus_node)), self.directory, file = 'jobs.list'))
-                self.addChildTarget(jtCmd('%s -p downstream_pathway.tab -c config.txt -b %s -o %s' % (paradigm_executable, 'data/down_N%s_' % (null), 'paradigm/N%s_%s_downstream.fa' % (null, self.analysis.focus_node)), self.directory, file = 'jobs.list'))
+                self.addChildTarget(jtCmd("%s -p upstream_pathway.tab -c config.txt -b %s -o %s" % (paradigm_executable, "data/up_N%s_" % (null), "paradigm/N%s_%s_upstream.fa" % (null, self.analysis.focus_node)), self.directory, file = "jobs.list"))
+                self.addChildTarget(jtCmd("%s -p downstream_pathway.tab -c config.txt -b %s -o %s" % (paradigm_executable, "data/down_N%s_" % (null), "paradigm/N%s_%s_downstream.fa" % (null, self.analysis.focus_node)), self.directory, file = "jobs.list"))
         elif self.paradigm_setup.paradigm_public:
-            os.mkdir('outputFiles')
+            os.mkdir("outputFiles")
             for b in range(batches):
-                self.addChildTarget(jtCmd('%s -p upstream_pathway.tab -c config.txt -b %s -o %s' % (paradigm_executable, 'data/up_b%s_%s_' % (b, batches), 'outputFiles/%s_upstream_b%s_%s.fa' % (self.analysis.focus_node, b, batches)), self.directory, file = 'jobs.list'))
-                self.addChildTarget(jtCmd('%s -p downstream_pathway.tab -c config.txt -b %s -o %s' % (paradigm_executable, 'data/down_b%s_%s_' % (b, batches), 'outputFiles/%s_downstream_b%s_%s.fa' % (self.analysis.focus_node, b, batches)), self.directory, file = 'jobs.list'))
+                self.addChildTarget(jtCmd("%s -p upstream_pathway.tab -c config.txt -b %s -o %s" % (paradigm_executable, "data/up_b%s_%s_" % (b, batches), "outputFiles/%s_upstream_b%s_%s.fa" % (self.analysis.focus_node, b, batches)), self.directory, file = "jobs.list"))
+                self.addChildTarget(jtCmd("%s -p downstream_pathway.tab -c config.txt -b %s -o %s" % (paradigm_executable, "data/down_b%s_%s_" % (b, batches), "outputFiles/%s_downstream_b%s_%s.fa" % (self.analysis.focus_node, b, batches)), self.directory, file = "jobs.list"))
                 for null in range(1, self.null_size + 1):
-                    self.addChildTarget(jtCmd('%s -p upstream_pathway.tab -c config.txt -b %s -o %s' % (paradigm_executable, 'data/up_N%s_b%s_%s_' % (null, b, batches), 'outputFiles/N%s_%s_upstream_b%s_%s.fa' % (null, self.analysis.focus_node, b, batches)), self.directory, file = 'jobs.list'))
-                    self.addChildTarget(jtCmd('%s -p downstream_pathway.tab -c config.txt -b %s -o %s' % (paradigm_executable, 'data/down_N%s_b%s_%s_' % (null, b, batches), 'outputFiles/N%s_%s_downstream_b%s_%s.fa' % (null, self.analysis.focus_node, b, batches)), self.directory, file = 'jobs.list'))
+                    self.addChildTarget(jtCmd("%s -p upstream_pathway.tab -c config.txt -b %s -o %s" % (paradigm_executable, "data/up_N%s_b%s_%s_" % (null, b, batches), "outputFiles/N%s_%s_upstream_b%s_%s.fa" % (null, self.analysis.focus_node, b, batches)), self.directory, file = "jobs.list"))
+                    self.addChildTarget(jtCmd("%s -p downstream_pathway.tab -c config.txt -b %s -o %s" % (paradigm_executable, "data/down_N%s_b%s_%s_" % (null, b, batches), "outputFiles/N%s_%s_downstream_b%s_%s.fa" % (null, self.analysis.focus_node, b, batches)), self.directory, file = "jobs.list"))
         else:
-            os.mkdir('outputFiles')
+            os.mkdir("outputFiles")
             for b in range(batches):
-                self.addChildTarget(jtCmd('%s -p upstream_pathway.tab -c config.txt -b %s -o %s -s %s,%s' % (paradigm_executable, 'data/up_', 'outputFiles/%s_upstream_b%s_%s.fa' % (self.analysis.focus_node, b, batches), b, batches), self.directory, file = 'jobs.list'))
-                self.addChildTarget(jtCmd('%s -p downstream_pathway.tab -c config.txt -b %s -o %s -s %s,%s' % (paradigm_executable, 'data/down_', 'outputFiles/%s_downstream_b%s_%s.fa' % (self.analysis.focus_node, b, batches), b, batches), self.directory, file = 'jobs.list'))
+                self.addChildTarget(jtCmd("%s -p upstream_pathway.tab -c config.txt -b %s -o %s -s %s,%s" % (paradigm_executable, "data/up_", "outputFiles/%s_upstream_b%s_%s.fa" % (self.analysis.focus_node, b, batches), b, batches), self.directory, file = "jobs.list"))
+                self.addChildTarget(jtCmd("%s -p downstream_pathway.tab -c config.txt -b %s -o %s -s %s,%s" % (paradigm_executable, "data/down_", "outputFiles/%s_downstream_b%s_%s.fa" % (self.analysis.focus_node, b, batches), b, batches), self.directory, file = "jobs.list"))
                 for null in range(1, self.null_size + 1):
-                    self.addChildTarget(jtCmd('%s -p upstream_pathway.tab -c config.txt -b %s -o %s -s %s,%s' % (paradigm_executable, 'data/up_N%s_' % (null), 'outputFiles/N%s_%s_upstream_b%s_%s.fa' % (null, self.analysis.focus_node, b, batches), b, batches), self.directory, file = 'jobs.list'))
-                    self.addChildTarget(jtCmd('%s -p downstream_pathway.tab -c config.txt -b %s -o %s -s %s,%s' % (paradigm_executable, 'data/down_N%s_' % (null), 'outputFiles/N%s_%s_downstream_b%s_%s.fa' % (null, self.analysis.focus_node, b, batches), b, batches), self.directory, file = 'jobs.list'))
+                    self.addChildTarget(jtCmd("%s -p upstream_pathway.tab -c config.txt -b %s -o %s -s %s,%s" % (paradigm_executable, "data/up_N%s_" % (null), "outputFiles/N%s_%s_upstream_b%s_%s.fa" % (null, self.analysis.focus_node, b, batches), b, batches), self.directory, file = "jobs.list"))
+                    self.addChildTarget(jtCmd("%s -p downstream_pathway.tab -c config.txt -b %s -o %s -s %s,%s" % (paradigm_executable, "data/down_N%s_" % (null), "outputFiles/N%s_%s_downstream_b%s_%s.fa" % (null, self.analysis.focus_node, b, batches), b, batches), self.directory, file = "jobs.list"))
         self.setFollowOnTarget(collectParadigm(self.analysis, self.paradigm_setup, self.directory, null_size = self.null_size))
 
 class collectParadigm(Target):
@@ -1814,13 +1814,13 @@ class collectParadigm(Target):
         
         batches = getBatchCount(len(self.paradigm_setup.samples), batch_size = self.paradigm_setup.batch_size)
         for b in range(batches):
-            os.system('cat outputFiles/%s_upstream_b%s_%s.fa >> paradigm/%s_upstream.fa' % (self.analysis.focus_node, b, batches, self.analysis.focus_node))
-            os.system('cat outputFiles/%s_downstream_b%s_%s.fa >> paradigm/%s_downstream.fa' % (self.analysis.focus_node, b, batches, self.analysis.focus_node))
+            os.system("cat outputFiles/%s_upstream_b%s_%s.fa >> paradigm/%s_upstream.fa" % (self.analysis.focus_node, b, batches, self.analysis.focus_node))
+            os.system("cat outputFiles/%s_downstream_b%s_%s.fa >> paradigm/%s_downstream.fa" % (self.analysis.focus_node, b, batches, self.analysis.focus_node))
             for null in range(1, self.null_size + 1):
-                os.system('cat outputFiles/N%s_%s_upstream_b%s_%s.fa >> paradigm/N%s_%s_upstream.fa' % (null, self.analysis.focus_node, b, batches, null, self.analysis.focus_node))
-                os.system('cat outputFiles/N%s_%s_downstream_b%s_%s.fa >> paradigm/N%s_%s_downstream.fa' % (null, self.analysis.focus_node, b, batches, null, self.analysis.focus_node))
-        if os.path.exists('outputFiles'):
-            os.system('rm -rf outputFiles')
+                os.system("cat outputFiles/N%s_%s_upstream_b%s_%s.fa >> paradigm/N%s_%s_upstream.fa" % (null, self.analysis.focus_node, b, batches, null, self.analysis.focus_node))
+                os.system("cat outputFiles/N%s_%s_downstream_b%s_%s.fa >> paradigm/N%s_%s_downstream.fa" % (null, self.analysis.focus_node, b, batches, null, self.analysis.focus_node))
+        if os.path.exists("outputFiles"):
+            os.system("rm -rf outputFiles")
 
 class computeShifts(Target):
     def __init__(self, fold, analysis, training_samples, paradigm_setup, current_parameters, parameters, directory, alpha = 0.05):
@@ -1839,10 +1839,10 @@ class computeShifts(Target):
         self.alpha = alpha
     def run(self):
         if self.fold == 0:
-            ps_directory = '%s/analysis/%s/final/param_%s' % (self.directory, self.analysis.directory, '_'.join([str(parameter) for parameter in self.current_parameters]))
+            ps_directory = "%s/analysis/%s/final/param_%s" % (self.directory, self.analysis.directory, "_".join([str(parameter) for parameter in self.current_parameters]))
             os.chdir(ps_directory)
         else:
-            ps_directory = "%s/analysis/%s/fold%s/param_%s" % (self.directory, self.analysis.directory, self.fold, '_'.join([str(parameter) for parameter in self.current_parameters]))
+            ps_directory = "%s/analysis/%s/fold%s/param_%s" % (self.directory, self.analysis.directory, self.fold, "_".join([str(parameter) for parameter in self.current_parameters]))
             os.chdir(ps_directory)
         
         ## define sample groups
@@ -1854,12 +1854,12 @@ class computeShifts(Target):
         testing_negative = list(set(self.analysis.negative_samples) & set(testing_all))
         
         ## read in Paradigm inferences
-        assert(os.path.exists('paradigm/%s_upstream.fa' % (self.analysis.focus_node)))
-        assert(os.path.exists('paradigm/%s_downstream.fa' % (self.analysis.focus_node)))
-        upstream_ipls = readParadigm('paradigm/%s_upstream.fa' % (self.analysis.focus_node))[1]
-        downstream_ipls = readParadigm('paradigm/%s_downstream.fa' % (self.analysis.focus_node))[1]
-        upstream_ipls.to_csv('upstream_paradigm.tab', sep = '\t')
-        downstream_ipls.to_csv('downstream_paradigm.tab', sep = '\t')
+        assert(os.path.exists("paradigm/%s_upstream.fa" % (self.analysis.focus_node)))
+        assert(os.path.exists("paradigm/%s_downstream.fa" % (self.analysis.focus_node)))
+        upstream_ipls = readParadigm("paradigm/%s_upstream.fa" % (self.analysis.focus_node))[1]
+        downstream_ipls = readParadigm("paradigm/%s_downstream.fa" % (self.analysis.focus_node))[1]
+        upstream_ipls.to_csv("upstream_paradigm.tab", sep = "\t")
+        downstream_ipls.to_csv("downstream_paradigm.tab", sep = "\t")
         # normalized_upstream_ipls = normalizeDataFrame(upstream_ipls.loc[[self.analysis.focus_node]], include_samples = training_negative)
         # normalized_downstream_ipls = normalizeDataFrame(downstream_ipls.loc[[self.analysis.focus_node]], include_samples = training_negative)
         null_upstream_ipls = {}
@@ -1867,10 +1867,10 @@ class computeShifts(Target):
         # normalized_null_upstream_ipls = {}
         # normalized_null_downstream_ipls = {}
         for null in range(1, self.null_size + 1):
-            assert(os.path.exists('paradigm/N%s_%s_upstream.fa' % (null, self.analysis.focus_node)))
-            assert(os.path.exists('paradigm/N%s_%s_downstream.fa' % (null, self.analysis.focus_node)))
-            null_upstream_ipls[null] = readParadigm('paradigm/N%s_%s_upstream.fa' % (null, self.analysis.focus_node))[1]
-            null_downstream_ipls[null] = readParadigm('paradigm/N%s_%s_downstream.fa' % (null, self.analysis.focus_node))[1]
+            assert(os.path.exists("paradigm/N%s_%s_upstream.fa" % (null, self.analysis.focus_node)))
+            assert(os.path.exists("paradigm/N%s_%s_downstream.fa" % (null, self.analysis.focus_node)))
+            null_upstream_ipls[null] = readParadigm("paradigm/N%s_%s_upstream.fa" % (null, self.analysis.focus_node))[1]
+            null_downstream_ipls[null] = readParadigm("paradigm/N%s_%s_downstream.fa" % (null, self.analysis.focus_node))[1]
             # normalized_null_upstream_ipls[null] = normalizeDataFrame(null_upstream_ipls[null].loc[[self.analysis.focus_node]], include_samples = training_negative)
             # normalized_null_downstream_ipls[null] = normalizeDataFrame(null_downstream_ipls[null].loc[[self.analysis.focus_node]], include_samples = training_negative)
         
@@ -1884,25 +1884,25 @@ class computeShifts(Target):
             for null in range(1, self.null_size + 1):
                 raw_shifts["null%s" % (null)][sample] = (null_downstream_ipls[null][sample][self.analysis.focus_node] - null_upstream_ipls[null][sample][self.analysis.focus_node])
         pandas.DataFrame(raw_shifts).to_csv("all_shifts.tab", sep = "\t", index_label = "id")
-        o = open('pshift.tab', 'w')
+        o = open("pshift.tab", "w")
         o.write("> %s\tP-Shifts:Table\n" % (self.analysis.focus_node))
         o.write("# sample\tclass\tP-Shift\n")
         for sample in self.paradigm_setup.samples:
             if sample in training_positive + testing_positive:
-                o.write("%s\t+\t%s\n" % (sample, raw_shifts['real'][sample]))
+                o.write("%s\t+\t%s\n" % (sample, raw_shifts["real"][sample]))
             elif sample in training_negative + testing_negative:
-                o.write("%s\t-\t%s\n" % (sample, raw_shifts['real'][sample]))
+                o.write("%s\t-\t%s\n" % (sample, raw_shifts["real"][sample]))
             else:
-                o.write("%s\t?\t%s\n" % (sample, raw_shifts['real'][sample]))
+                o.write("%s\t?\t%s\n" % (sample, raw_shifts["real"][sample]))
         o.close()
         o = open("wildtype_shifts.tab", "w")
         o.write("sample\tP-Shift\n")
         for sample in self.paradigm_setup.samples:
             if sample in training_negative + testing_negative:
-                o.write("%s\t%s\n" % (sample, raw_shifts['real'][sample]))
+                o.write("%s\t%s\n" % (sample, raw_shifts["real"][sample]))
         o.close()
         #### output sample by real + null matrix
-        # o = open('normalized_pshift.tab', 'w')
+        # o = open("normalized_pshift.tab", "w")
         # o.write("> %s\tNormalized_P-Shifts:Table\n" % (self.analysis.focus_node))
         # o.write("# sample\tclass\tP-Shift\n")
         # for sample in self.paradigm_setup.samples:
@@ -1913,14 +1913,14 @@ class computeShifts(Target):
         # o.close()
         raw_centered_shifts = {}
         # normalized_centered_shifts = {}
-        (raw_negative_mean, raw_negative_sd) = computeMean([raw_shifts['real'][sample] for sample in training_negative], return_sd = True)
-        (raw_positive_mean, raw_positive_sd) = computeMean([raw_shifts['real'][sample] for sample in training_positive], return_sd = True)
+        (raw_negative_mean, raw_negative_sd) = computeMean([raw_shifts["real"][sample] for sample in training_negative], return_sd = True)
+        (raw_positive_mean, raw_positive_sd) = computeMean([raw_shifts["real"][sample] for sample in training_positive], return_sd = True)
         # (normalized_negative_mean, normalized_negative_sd) = computeMean([normalized_shifts[sample] for sample in training_negative], return_sd = True)
         # (normalized_positive_mean, normalized_positive_sd) = computeMean([normalized_shifts[sample] for sample in training_positive], return_sd = True)
         for sample in self.paradigm_setup.samples:
-            raw_centered_shifts[sample] = (raw_shifts['real'][sample] - raw_negative_mean)/raw_negative_sd
+            raw_centered_shifts[sample] = (raw_shifts["real"][sample] - raw_negative_mean)/raw_negative_sd
             # normalized_centered_shifts[sample] = (normalized_shifts[sample] - normalized_negative_mean)/normalized_negative_sd
-        o = open('pshift.centered.tab', 'w')
+        o = open("pshift.centered.tab", "w")
         o.write("> %s\tP-Shifts:Table\n" % (self.analysis.focus_node))
         o.write("# sample\tclass\tP-Shift\n")
         for sample in self.paradigm_setup.samples:
@@ -1929,7 +1929,7 @@ class computeShifts(Target):
             else:
                 o.write("%s\t-\t%s\n" % (sample, raw_centered_shifts[sample]))
         o.close()
-        # o = open('normalized_pshift.centered.tab', 'w')
+        # o = open("normalized_pshift.centered.tab", "w")
         # o.write("> %s\tNormalized_P-Shifts:Table\n" % (self.analysis.focus_node))
         # o.write("# sample\tclass\tP-Shift\n")
         # for sample in self.paradigm_setup.samples:
@@ -1954,10 +1954,10 @@ class computeShifts(Target):
             training_auc = computeAUC(training_samples_sorted, absolute_shifts, classification_map)[0]
         else:
             if raw_positive_mean >= raw_negative_mean:
-                training_samples_sorted.sort(lambda x, y: cmp(raw_shifts['real'][y], raw_shifts['real'][x]))
+                training_samples_sorted.sort(lambda x, y: cmp(raw_shifts["real"][y], raw_shifts["real"][x]))
             elif raw_positive_mean < raw_negative_mean:
-                training_samples_sorted.sort(lambda x, y: cmp(raw_shifts['real'][x], raw_shifts['real'][y]))
-            training_auc = computeAUC(training_samples_sorted, raw_shifts['real'], classification_map)[0]
+                training_samples_sorted.sort(lambda x, y: cmp(raw_shifts["real"][x], raw_shifts["real"][y]))
+            training_auc = computeAUC(training_samples_sorted, raw_shifts["real"], classification_map)[0]
         if self.fold != 0:
             testing_samples_sorted = deepcopy(testing_all)
             if self.parameters.cross_validation_two_sided:
@@ -1965,99 +1965,99 @@ class computeShifts(Target):
                 testing_auc = computeAUC(testing_samples_sorted, absolute_shifts, classification_map)[0]
             else:
                 if raw_positive_mean >= raw_negative_mean:
-                    testing_samples_sorted.sort(lambda x, y: cmp(raw_shifts['real'][y], raw_shifts['real'][x]))
+                    testing_samples_sorted.sort(lambda x, y: cmp(raw_shifts["real"][y], raw_shifts["real"][x]))
                 elif raw_positive_mean < raw_negative_mean:
-                    testing_samples_sorted.sort(lambda x, y: cmp(raw_shifts['real'][x], raw_shifts['real'][y])) 
-                testing_auc = computeAUC(testing_samples_sorted, raw_shifts['real'], classification_map)[0]
+                    testing_samples_sorted.sort(lambda x, y: cmp(raw_shifts["real"][x], raw_shifts["real"][y])) 
+                testing_auc = computeAUC(testing_samples_sorted, raw_shifts["real"], classification_map)[0]
         else:
-            testing_auc = '---'
-        o = open('auc.tab', 'w')
-        o.write('%s\t%s\n' % (training_auc, testing_auc))
+            testing_auc = "---"
+        o = open("auc.tab", "w")
+        o.write("%s\t%s\n" % (training_auc, testing_auc))
         o.close()
         
         ## compute m-separation and significance
         if self.fold == 0:
-            o = open('positive.scores', 'w')
-            o.write('%s\n' % ('\n'.join([str(raw_shifts['real'][sample]) for sample in training_positive])))
+            o = open("positive.scores", "w")
+            o.write("%s\n" % ("\n".join([str(raw_shifts["real"][sample]) for sample in training_positive])))
             o.close()
-            o = open('negative.scores', 'w')
-            o.write('%s\n' % ('\n'.join([str(raw_shifts['real'][sample]) for sample in training_negative])))
+            o = open("negative.scores", "w")
+            o.write("%s\n" % ("\n".join([str(raw_shifts["real"][sample]) for sample in training_negative])))
             o.close()
             mseparation_map = {}
-            mseparation_map['real'] = computeSeparation(training_positive,
+            mseparation_map["real"] = computeSeparation(training_positive,
                                                         training_negative,
-                                                        raw_shifts['real'],
+                                                        raw_shifts["real"],
                                                         method = self.parameters.separation_method)
             for null in range(1, self.null_size + 1):
-                mseparation_map['null%s' % (null)] = computeSeparation(training_positive,
+                mseparation_map["null%s" % (null)] = computeSeparation(training_positive,
                                                                        training_negative,
-                                                                       raw_shifts['null%s' % (null)],
+                                                                       raw_shifts["null%s" % (null)],
                                                                        method = self.parameters.separation_method)
-            o = open('real.scores', 'w')
-            o.write('%s\n' % (mseparation_map['real']))
+            o = open("real.scores", "w")
+            o.write("%s\n" % (mseparation_map["real"]))
             o.close()
-            o = open('null.scores', 'w')
-            o.write('%s\n' % ('\n'.join([str(mseparation_map['null%s' % (null)]) for null in range(1, self.null_size + 1)])))
+            o = open("null.scores", "w")
+            o.write("%s\n" % ("\n".join([str(mseparation_map["null%s" % (null)]) for null in range(1, self.null_size + 1)])))
             o.close()
-            real_scores = [mseparation_map['real']]
-            null_scores = [mseparation_map['null%s' % (null)] for null in range(1, self.null_size + 1)]
+            real_scores = [mseparation_map["real"]]
+            null_scores = [mseparation_map["null%s" % (null)] for null in range(1, self.null_size + 1)]
             (null_mean, null_sd) = computeMean(null_scores, return_sd = True)
             significance_score = (real_scores[0] - null_mean)/(null_sd + self.alpha)
-            o = open('significance.tab', 'w')
-            o.write('# Focus_Genes\tNegative_Samples\tPositive_Samples\tM-Separation\tZ-Score\n')
-            o.write('%s\t%s\t%s\t%s\t%s\n' % (self.analysis.focus_node, len(training_negative), len(training_positive), real_scores[0], significance_score))
+            o = open("significance.tab", "w")
+            o.write("# Focus_Genes\tNegative_Samples\tPositive_Samples\tM-Separation\tZ-Score\n")
+            o.write("%s\t%s\t%s\t%s\t%s\n" % (self.analysis.focus_node, len(training_negative), len(training_positive), real_scores[0], significance_score))
             o.close()
         else:
-            o = open('significance.tab', 'w')
-            o.write('# Focus_Genes\tNegative_Samples\tPositive_Samples\tM-Separation\tZ-Score\n')
-            o.write('%s\t%s\t%s\t%s\t%s\n' % (self.analysis.focus_node, len(training_negative), len(training_positive), '---', '---'))
+            o = open("significance.tab", "w")
+            o.write("# Focus_Genes\tNegative_Samples\tPositive_Samples\tM-Separation\tZ-Score\n")
+            o.write("%s\t%s\t%s\t%s\t%s\n" % (self.analysis.focus_node, len(training_negative), len(training_positive), "---", "---"))
             o.close()
 
         ## output files for circleplots
         if self.fold == 0:
-            o = open('up.features', 'w')
+            o = open("up.features", "w")
             for feature in set(upstream_ipls.index) - set(self.analysis.focus_genes):
-                o.write('%s\n' % (feature))
+                o.write("%s\n" % (feature))
             o.close()
-            o = open('alteration.features', 'w')
-            o.write('%s\n' % ('\n'.join(self.analysis.focus_genes)))
+            o = open("alteration.features", "w")
+            o.write("%s\n" % ("\n".join(self.analysis.focus_genes)))
             if len(self.analysis.focus_genes) > 0:
-                o.write('%s\n' % (self.analysis.focus_node))
+                o.write("%s\n" % (self.analysis.focus_node))
             o.close()
-            o = open('down.features', 'w')
+            o = open("down.features", "w")
             for feature in set(downstream_ipls.index) - set(self.analysis.focus_genes):
-                o.write('%s\n' % (feature))
+                o.write("%s\n" % (feature))
             o.close()
-            o = open('include.samples', 'w')
+            o = open("include.samples", "w")
             for sample in self.paradigm_setup.samples:
-                o.write('%s\n' % (sample))
+                o.write("%s\n" % (sample))
             o.close()
-            o = open('alteration.circle', 'w')
-            o.write('id')
+            o = open("alteration.circle", "w")
+            o.write("id")
             for sample in self.paradigm_setup.samples:
-                o.write('\t%s' % (sample))
-            o.write('\n*')
+                o.write("\t%s" % (sample))
+            o.write("\n*")
             for sample in self.paradigm_setup.samples:
                 if sample in self.analysis.positive_samples:
-                    o.write('\t1')
+                    o.write("\t1")
                 elif sample in self.analysis.negative_samples:
-                    o.write('\t0')
+                    o.write("\t0")
                 else:
-                    o.write('\t0.5')
-            o.write('\n')
+                    o.write("\t0.5")
+            o.write("\n")
             o.close()
-            os.system('median-center.py data/transposed_%s expression.circle' % (self.paradigm_setup.mrna[0].split('/')[-1]))
-            o = open('shift.circle', 'w')
-            o.write('id')
+            os.system("median-center.py data/transposed_%s expression.circle" % (self.paradigm_setup.mrna[0].split("/")[-1]))
+            o = open("shift.circle", "w")
+            o.write("id")
             for sample in self.paradigm_setup.samples:
-                o.write('\t%s' % (sample))
-            o.write('\n*')
+                o.write("\t%s" % (sample))
+            o.write("\n*")
             for sample in self.paradigm_setup.samples:
-                o.write('\t%s' % (raw_shifts['real'][sample]))
-            o.write('\n')
+                o.write("\t%s" % (raw_shifts["real"][sample]))
+            o.write("\n")
             o.close()
-            o = open('color.map', 'w')
-            o.write('> 1\n0\t255.255.255\n1\t0.0.0\n0.5\t150.150.150\n')
+            o = open("color.map", "w")
+            o.write("> 1\n0\t255.255.255\n1\t0.0.0\n0.5\t150.150.150\n")
             o.close()
 
 class compareParameters(Target):
@@ -2069,10 +2069,10 @@ class compareParameters(Target):
         self.directory = directory
     def run(self):
         if self.fold == 0:
-            ps_directory = '%s/analysis/%s/final' % (self.directory, self.analysis.directory)
+            ps_directory = "%s/analysis/%s/final" % (self.directory, self.analysis.directory)
             os.chdir(ps_directory)
         else:
-            ps_directory = '%s/analysis/%s/fold%s' % (self.directory, self.analysis.directory, self.fold)
+            ps_directory = "%s/analysis/%s/fold%s" % (self.directory, self.analysis.directory, self.fold)
             os.chdir(ps_directory)
         
         ## report AUCs for model with best training validation
@@ -2083,8 +2083,8 @@ class compareParameters(Target):
             for cost in self.parameters.cost:
                 for method in self.parameters.selection_method:
                     current_parameters = [threshold, cost, method]
-                    f = open('param_%s/auc.tab' % ('_'.join([str(parameter) for parameter in current_parameters])), 'r')
-                    (current_training_auc, current_testing_auc) = f.readline().rstrip().split('\t')
+                    f = open("param_%s/auc.tab" % ("_".join([str(parameter) for parameter in current_parameters])), "r")
+                    (current_training_auc, current_testing_auc) = f.readline().rstrip().split("\t")
                     f.close()
                     try:
                         current_training_auc = float(current_training_auc)
@@ -2099,11 +2099,11 @@ class compareParameters(Target):
                         best_testing_auc = current_testing_auc
                         best_parameters = [str(threshold), str(cost), str(method)]
         if self.fold != 0:
-            o = open('auc.tab', 'w')
+            o = open("auc.tab", "w")
             if best_training_auc == 0.0:
-                o.write('---\t---\t---\n')
+                o.write("---\t---\t---\n")
             else:
-                o.write('%s\t%s\t%s\n' % (best_training_auc, best_testing_auc, ','.join(best_parameters)))
+                o.write("%s\t%s\t%s\n" % (best_training_auc, best_testing_auc, ",".join(best_parameters)))
             o.close()
         else:
             if best_parameters is not None:
@@ -2117,44 +2117,38 @@ class generateOutput(Target):
         self.parameters = parameters
         self.directory = directory
     def run(self):
-        ps_directory = '%s/analysis/%s' % (self.directory, self.analysis.directory)
+        ps_directory = "%s/analysis/%s" % (self.directory, self.analysis.directory)
         os.chdir(ps_directory)
         
         ## copy tables
-        os.system('cp final/param_%s/significance.tab significance.tab' % ('_'.join(self.best_parameters)))
-        os.system('cp final/param_%s/pshift.tab pshift.tab' % ('_'.join(self.best_parameters)))
-        os.system('cp final/param_%s/wildtype_shifts.tab wildtype_shifts.tab' % ('_'.join(self.best_parameters)))
-        os.system('cp final/param_%s/combined_pathway.tab combined_pathway.tab' % ('_'.join(self.best_parameters)))
-        # os.system('cp final/param_%s/normalized_pshift.tab normalized_pshift.tab' % ('_'.join(self.best_parameters)))
+        os.system("cp final/param_%s/significance.tab significance.tab" % ("_".join(self.best_parameters)))
+        os.system("cp final/param_%s/pshift.tab pshift.tab" % ("_".join(self.best_parameters)))
+        os.system("cp final/param_%s/wildtype_shifts.tab wildtype_shifts.tab" % ("_".join(self.best_parameters)))
+        os.system("cp final/param_%s/combined_pathway.tab combined_pathway.tab" % ("_".join(self.best_parameters)))
+        # os.system("cp final/param_%s/normalized_pshift.tab normalized_pshift.tab" % ("_".join(self.best_parameters)))
         
         ## output m-separation and significance plots
-        os.system('mseparation.R %s final/param_%s/positive.scores final/param_%s/negative.scores' % (self.analysis.focus_node,
-                                                                                          '_'.join(self.best_parameters),
-                                                                                          '_'.join(self.best_parameters)))
-        os.system('significance.R %s final/param_%s/real.scores final/param_%s/null.scores' % (self.analysis.focus_node,
-                                                                                          '_'.join(self.best_parameters),
-                                                                                          '_'.join(self.best_parameters)))
+        os.system("mseparation.R %s final/param_%s/positive.scores final/param_%s/negative.scores" % (self.analysis.focus_node,
+                                                                                          "_".join(self.best_parameters),
+                                                                                          "_".join(self.best_parameters)))
+        os.system("significance.R %s final/param_%s/real.scores final/param_%s/null.scores" % (self.analysis.focus_node,
+                                                                                          "_".join(self.best_parameters),
+                                                                                          "_".join(self.best_parameters)))
         
         ## output circleplots
-        os.mkdir('img')
-        os.chdir('final/param_%s' % ('_'.join(self.best_parameters)))
-        os.system('%s -m color.map -o \"%s;alteration.circle,shift.circle\" -s include.samples -f alteration.features ../../img/ alteration.circle expression.circle shift.circle' % (circleplot_executable, self.analysis.focus_node))
-        os.system('%s -m color.map -o \"%s;alteration.circle,shift.circle\" -s include.samples -f up.features ../../img/ alteration.circle expression.circle' % (circleplot_executable, self.analysis.focus_node))
-        os.system('%s -m color.map -o \"%s;alteration.circle,shift.circle\" -s include.samples -f down.features ../../img/ alteration.circle expression.circle' % (circleplot_executable, self.analysis.focus_node))
-        os.chdir('../..')
-        
-        ## output sif
-        combined_pathway = Pathway( ({}, {}) )
-        combined_pathway.appendPathway(Pathway('final/param_%s/upstream_pathway.tab' % ('_'.join(self.best_parameters))))
-        combined_pathway.appendPathway(Pathway('final/param_%s/downstream_pathway.tab' % ('_'.join(self.best_parameters))))
-        combined_pathway.writeSIF('pshift_%s.sif' % (self.analysis.focus_node))
+        os.mkdir("img")
+        os.chdir("final/param_%s" % ("_".join(self.best_parameters)))
+        os.system("%s -m color.map -o \"%s;alteration.circle,shift.circle\" -s include.samples -f alteration.features ../../img/ alteration.circle expression.circle shift.circle" % (circleplot_executable, self.analysis.focus_node))
+        os.system("%s -m color.map -o \"%s;alteration.circle,shift.circle\" -s include.samples -f up.features ../../img/ alteration.circle expression.circle" % (circleplot_executable, self.analysis.focus_node))
+        os.system("%s -m color.map -o \"%s;alteration.circle,shift.circle\" -s include.samples -f down.features ../../img/ alteration.circle expression.circle" % (circleplot_executable, self.analysis.focus_node))
+        os.chdir("../..")
         
         ## cleanup unneeded files
         for round in range(1, self.parameters.n_rounds + 1):
             for fold in range(1, self.parameters.m_folds + 1):
                 fold_index = (round - 1)*self.parameters.m_folds + fold
-                if os.path.exists('fold%s' % (fold_index)):
-                    shutil.rmtree('fold%s' % (fold_index))
+                if os.path.exists("fold%s" % (fold_index)):
+                    shutil.rmtree("fold%s" % (fold_index))
 
 class makeReport(Target):
     def __init__(self, report_list, report_directory, directory):
@@ -2166,31 +2160,32 @@ class makeReport(Target):
         os.chdir(self.directory)
         
         if not os.path.exists(self.report_directory):
-            os.mkdir('%s' % (self.report_directory))
+            os.mkdir("%s" % (self.report_directory))
         
         for analysis in self.report_list:
-            if os.path.exists('%s/%s' % (self.report_directory, analysis)):
+            if os.path.exists("%s/%s" % (self.report_directory, analysis)):
                 continue
-            os.mkdir('%s/%s' % (self.report_directory, analysis))
-            os.system('cp analysis/%s/pshift.tab %s/%s' % (analysis, self.report_directory, analysis))
-            os.system('cp analysis/%s/significance.tab %s/%s' % (analysis, self.report_directory, analysis))
-            os.system('cp analysis/%s/*.sif %s/%s' % (analysis, self.report_directory, analysis))
-            os.system('cp -r analysis/%s/img %s/%s' % (analysis, self.report_directory, analysis))
-            os.system('cp analysis/%s/*.pdf %s/%s' % (analysis, self.report_directory, analysis))
+            os.mkdir("%s/%s" % (self.report_directory, analysis))
+            os.system("cp analysis/%s/pshift.tab %s/%s" % (analysis, self.report_directory, analysis))
+            os.system("cp analysis/%s/significance.tab %s/%s" % (analysis, self.report_directory, analysis))
+            os.system("cp analysis/%s/wildtype_shifts.tab %s/%s" % (analysis, self.report_directory, analysis))
+            os.system("cp analysis/%s/combined_pathway.tab %s/%s" % (analysis, self.report_directory, analysis))
+            os.system("cp -r analysis/%s/img %s/%s" % (analysis, self.report_directory, analysis))
+            os.system("cp analysis/%s/*.pdf %s/%s" % (analysis, self.report_directory, analysis))
         
         ## cytoscape-web
         # for gene in self.includeFeatures:
-        #     if os.path.exists('analysis/%s/sig.tab' % (gene)):
+        #     if os.path.exists("analysis/%s/sig.tab" % (gene)):
         #         tableFiles = []
-        #         tableFiles.append('analysis/%s/sig.tab' % (gene))
-        #         tableFiles.append('msepPlot:analysis/%s/%s.msep.pdf' % (gene, gene))
-        #         tableFiles.append('backgroundPlot:analysis/%s/%s.background.pdf' %
+        #         tableFiles.append("analysis/%s/sig.tab" % (gene))
+        #         tableFiles.append("msepPlot:analysis/%s/%s.msep.pdf" % (gene, gene))
+        #         tableFiles.append("backgroundPlot:analysis/%s/%s.background.pdf" %
         #                                                                      (gene, gene))
-        #         tableFiles.append('analysis/%s/avgAUC.tab' % (gene))
-        #         tableFiles.append('analysis/%s/pshift.tab' % (gene))
-        #         system('pathmark-report.py -t %s analysis/%s %s' %
-        #                                      (','.join(tableFiles), gene, self.reportDir))
-        #         system('cp analysis/%s/pshift* %s' % (gene, self.reportDir))
+        #         tableFiles.append("analysis/%s/avgAUC.tab" % (gene))
+        #         tableFiles.append("analysis/%s/pshift.tab" % (gene))
+        #         system("pathmark-report.py -t %s analysis/%s %s" %
+        #                                      (",".join(tableFiles), gene, self.reportDir))
+        #         system("cp analysis/%s/pshift* %s" % (gene, self.reportDir))
 
 def ps_main():
     logger = logging.getLogger("pds")
@@ -2202,7 +2197,7 @@ def ps_main():
     logger.addHandler(file_handler)
     
     ## check for fresh run
-    if os.path.exists('.jobTree'):
+    if os.path.exists(".jobTree"):
         logger.warning("WARNING: '.jobTree' directory found, remove it first to start a fresh run\n")
     
     ## parse arguments
@@ -2275,23 +2270,23 @@ def ps_main():
     else:
         include_features = None
     altered_list = []
-    f = open(analysis_file, 'r')
+    f = open(analysis_file, "r")
     for line in f:
         if line.isspace():
             continue
-        pline = line.rstrip().split('\t')
+        pline = line.rstrip().split("\t")
         if len(pline) == 3:
             altered = Alterations(pline[0],
-                                  pline[1].split(','),
+                                  pline[1].split(","),
                                   paradigm_setup.samples,
-                                  pline[2].split(','),
+                                  pline[2].split(","),
                                   negative_samples = None)
         elif len(pline) == 4:
             altered = Alterations(pline[0],
-                                  pline[1].split(','),
+                                  pline[1].split(","),
                                   paradigm_setup.samples,
-                                  pline[2].split(','),
-                                  negative_samples = pline[3].split(','))
+                                  pline[2].split(","),
+                                  negative_samples = pline[3].split(","))
         if len(set(altered.focus_genes) & set(global_pathway.nodes)) == len(altered.focus_genes):
             if include_features != None:
                 if len(set(altered.focus_genes) & set(include_features)) == 0:
@@ -2310,18 +2305,18 @@ def ps_main():
                                  paradigm_setup,
                                  global_pathway,
                                  parameters,
-                                 os.getcwd().rstrip('/')))
+                                 os.getcwd().rstrip("/")))
     else:
         s = Stack(queueAnalyses(altered_list,
                                 paradigm_setup,
                                 global_pathway,
                                 parameters,
-                                os.getcwd().rstrip('/')))
+                                os.getcwd().rstrip("/")))
     if options.jobFile:
         s.addToJobFile(options.jobFile)
     else:
         if options.jobTree == None:
-            options.jobTree = './.jobTree'
+            options.jobTree = "./.jobTree"
         
         jobtree_dir = options.jobTree.rstrip("/")
         lasttree_dir = jobtree_dir + "_previous"
@@ -2336,6 +2331,6 @@ def ps_main():
             if os.path.exists(jobtree_dir):
                 shutil.move(jobtree_dir, lasttree_dir)
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     from paradigmSHIFT import *
     ps_main()
