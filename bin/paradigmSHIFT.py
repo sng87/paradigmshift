@@ -2124,7 +2124,7 @@ class generateOutput(Target):
         shutil.copy("final/param_%s/pshift.tab" % ("_".join(self.best_parameters)), "pshift.tab")
         shutil.copy("final/param_%s/wildtype_shifts.tab" % ("_".join(self.best_parameters)), "wildtype_shifts.tab")
         shutil.copy("final/param_%s/combined_pathway.tab" % ("_".join(self.best_parameters)), "combined_pathway.tab")
-        shutil.copy("final/param_%s/normalized_pshift.tab" % ("_".join(self.best_parameters)), "normalized_pshift.tab")
+        # shutil.copy("final/param_%s/normalized_pshift.tab" % ("_".join(self.best_parameters)), "normalized_pshift.tab")
         
         ## output m-separation and significance plots
         os.system("mseparation.R %s final/param_%s/positive.scores final/param_%s/negative.scores" % (self.analysis.focus_node,
