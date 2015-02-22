@@ -13,9 +13,6 @@ from optparse import OptionParser
 from jobTree.scriptTree.target import Target
 from jobTree.scriptTree.stack import Stack
 
-## logger
-logging.basicConfig(filename="paradigm-shift.log", level=logging.INFO)
-
 ## executables
 bin_directory = os.path.dirname(os.path.abspath(__file__))
 # paradigm_executable = os.path.join(bin_directory, 'paradigm')
@@ -414,19 +411,6 @@ class Pathway:
                                                                       set(append_pathway.interactions[source][target].split(";"))))
 
 ## functions
-def logger(message, file = None, die = False):
-    """
-    Writes messages to standard error [2014-3-1]
-    """
-    if file is None:
-        sys.stderr.write(message)
-    else:
-        o = open(file, 'a')
-        o.write(message)
-        o.close()
-    if die:
-        sys.exit(1)
-
 def returnRows(input_file, sep = "\t", index = 0, header = True):
     """
     Returns the rows of a file without loading it into memory [2014-12-14]
@@ -676,41 +660,41 @@ def computeFeatureScores(data_map, positive_samples, negative_samples, upstream_
                                                 alpha = 0.0,
                                                 return_df = False)
         return(score_map)
-	# def scoreSVM(matData, posSamples, negSamples):
-		# import liblinear
-		# import liblinearutil
-		# svmLabels = []
-		# svmData = []
-		# featureMap = {}
-		# for sample in (posSamples + negSamples):
-			# if sample in posSamples:
-				# svmLabels.append(1)
-			# else:
-				# svmLabels.append(-1)
-			# svmData.append({})
-			# for i, feature in enumerate(matData.keys()):
-				# if i+1 not in featureMap:
-					# featureMap[i+1] = feature
-				# try:
-					# svmData[-1][i+1] = float(matData[feature][sample])
-				# except ValueError:
-					# svmData[-1][i+1] = 0.0
-		# prob = liblinear.problem(svmLabels, svmData)
-		# param = liblinear.parameter('-s 3 -c 5 -q')
-		# liblinearutil.save_model('model_file', liblinearutil.train(prob, param))
-		# # m = liblinearutil.train(prob, param)
-		# # testLabels = [] ## like svmLabels
-		# # testData = [] ## like svmData
-		# # for i in range(len(testLabels)):
-		# #     x0, max_idx = gen_feature_nodearray(testData[i])
-		# #     label = liblinear.predict(m, x0)
-		# #     if label == testLabels[i]:
-		# #         print "correct!"
-		# weights = rList("model_file")[6:]
-		# scoreMap = {}
-		# for feature in featureMap.keys():
-			# scoreMap[featureMap[feature]] = float(weights[feature-1])
-		# return (scoreMap)
+    def getScoreBySVM(data_frame, positive_samples, negative_samples):
+        import liblinear
+        import liblinearutil
+        svm_labels = []
+        svm_data = []
+        feature_map = {}
+        for sample in positive_samples + negative_samples:
+            if sample in positive_samples:
+                svm_labels.append(1)
+            else:
+                svm_labels.append(-1)
+            svm_data.append({})
+            for index, feature in enumerate(data_frame.columns):
+                if index + 1 not in feature_map:
+                    feature_map[index + 1] = feature
+                try:
+                    svm_data[-1][index + 1] = float(data_frame[feature][sample])
+                except ValueError:
+                    svmData[-1][index + 1] = 0.0
+        prob = liblinear.problem(svm_labels, svm_data)
+        param = liblinear.parameter('-s 3 -c 5 -q')
+        liblinearutil.save_model('model_file', liblinearutil.train(prob, param))
+        # m = liblinearutil.train(prob, param)
+        # testLabels = [] #like svmLabels
+        # testData = [] #like svmData
+        # for i in range(len(testLabels)):
+        #     x0, max_idx = gen_feature_nodearray(testData[i])
+        #     label = liblinear.predict(m, x0)
+        #     if label == testLabels[i]:
+        #         print "correct!"
+        weights = readList("model_file")[6:]
+        score_map = {}
+        for feature in feature_map.keys():
+            score_map[feature_map[feature]] = float(weights[feature - 1])
+        return (score_map)
     def getScoreByGelNet(data_frame, positive_samples, negative_samples, upstream_pathway_map, downstream_pathway_map, l1 = 0.95, l2 = 0.05):
         """
         Refactoring of https://github.com/ucscCancer/pathway_tools/blob/master/scripts/diffuse.py [613be7d5baad339e8ddc852be6e10baff0cf8f9c]
@@ -824,7 +808,7 @@ def computeFeatureScores(data_map, positive_samples, negative_samples, upstream_
                 o.write('Key\t' + '\t'.join(sorted(self.labels)) + '\n')
                 for nodeA in sorted(self.labels):
                     printstr = nodeA
-                    # through columns
+                    ## through columns
                     for nodeB in sorted(self.labels):
                         if (nodeA, nodeB) in edges:
                             printstr += '\t' + edges[(nodeA, nodeB)]
@@ -1016,7 +1000,8 @@ def getSelectedNeighborhood(focus_node, focus_genes, data_map, positive_samples,
         return(max(value_list))
     
     score_map = computeFeatureScores(data_map, positive_samples, negative_samples, upstream_pathway_map, downstream_pathway_map, method = method)
-    logger('## upstream neighborhood\n', file = 'selection.log')
+    l = open("selection.log", "w")
+    l.write('## upstream neighborhood\n')
     selected_upstream_pathway = Pathway( ({}, {}) )
     for focus_gene in focus_genes:
         selected_upstream_pathway.nodes[focus_gene] = base_upstream_pathway.nodes[focus_gene]
@@ -1034,7 +1019,7 @@ def getSelectedNeighborhood(focus_node, focus_genes, data_map, positive_samples,
     if len(ranked_upstream_features) > 0:
         while (len(selected_upstream_features) < 4) or (getUpstreamValue(ranked_upstream_features[0], score_map) > threshold + cost*len(selected_upstream_features)):
             current_feature = ranked_upstream_features.pop(0)
-            logger('%s\t%s\t%s\t%s\n' % (current_feature, getUpstreamValue(current_feature, score_map), len(selected_upstream_features), upstream_path_map[current_feature]), file = 'selection.log')
+            l.write('%s\t%s\t%s\t%s\n' % (current_feature, getUpstreamValue(current_feature, score_map), len(selected_upstream_features), upstream_path_map[current_feature]))
             selected_upstream_features.append(current_feature)
             for path in upstream_path_map[current_feature]:
                 collapsed_path = collapsePath(path, max_distance = max_distance)
@@ -1054,7 +1039,7 @@ def getSelectedNeighborhood(focus_node, focus_genes, data_map, positive_samples,
                     selected_upstream_pathway.interactions[edge[0]][edge[2]] = edge[1]
             if len(ranked_upstream_features) == 0:
                 break
-    logger('## downstream neighborhood\n', file = 'selection.log')
+    l.write('## downstream neighborhood\n')
     selected_downstream_pathway = Pathway( ({}, {}) )
     for focus_gene in focus_genes:
         selected_downstream_pathway.nodes[focus_gene] = base_downstream_pathway.nodes[focus_gene]
@@ -1072,7 +1057,7 @@ def getSelectedNeighborhood(focus_node, focus_genes, data_map, positive_samples,
     if len(ranked_downstream_features) > 0:
         while (len(selected_downstream_features) < 4) or (getDownstreamValue(ranked_downstream_features[0], score_map) > threshold + cost*len(selected_downstream_features)):
             current_feature = ranked_downstream_features.pop(0)
-            logger('%s\t%s\t%s\t%s\n' % (current_feature, getDownstreamValue(current_feature, score_map), len(selected_downstream_features), downstream_path_map[current_feature]), file = 'selection.log')
+            l.write('%s\t%s\t%s\t%s\n' % (current_feature, getDownstreamValue(current_feature, score_map), len(selected_downstream_features), downstream_path_map[current_feature]))
             selected_downstream_features.append(current_feature)
             for path in downstream_path_map[current_feature]:
                 collapsed_path = collapsePath(path, max_distance = max_distance)
@@ -1391,6 +1376,13 @@ class queueAnalyses(Target):
         self.total_analyses = total_analyses
     def run(self):
         os.chdir(self.directory)
+        logger = logging.getLogger("pds")
+        logger.setLevel(logging.DEBUG)
+        formatter = logging.Formatter("%(levelname)-8s %(name)-15s %(asctime)-25s %(message)s")
+        file_handler = logging.FileHandler("paradigm-shift.%s.log" % (os.getpid()))
+        file_handler.setFormatter(formatter)
+        file_handler.setLevel(logging.INFO)
+        logger.addHandler(file_handler)
         
         ## queue analyses
         report_list = deepcopy(self.last_report_list)
@@ -1402,7 +1394,7 @@ class queueAnalyses(Target):
         if len(self.analysis_list) > 0:
             analysis = self.analysis_list[0]
             if not os.path.exists('analysis/%s' % (analysis.directory)):
-                logger('Running analysis on %s (%s/%s)\n' % (analysis.analysis_name, self.run_analyses + 1, self.total_analyses), file = 'progress.log')
+                logger.info('Starting analysis on %s [%s/%s]\n' % (analysis.analysis_name, self.run_analyses + 1, self.total_analyses))
                 os.mkdir('analysis/%s' % (analysis.directory))
                 report_list.append(analysis.directory)
                 self.addChildTarget(branchFolds(analysis,
@@ -1411,7 +1403,8 @@ class queueAnalyses(Target):
                                                 self.parameters,
                                                 self.directory))
             else:
-                logger('Already performed analysis on %s (%s/%s)\n' % (analysis.analysis_name, self.run_analyses + 1, self.total_analyses), file = 'progress.log')
+                logger.info('Already completed analysis on %s [%s/%s]\n' % (analysis.analysis_name, self.run_analyses + 1, self.total_analyses))
+                pass
             self.setFollowOnTarget(queueAnalyses(self.analysis_list[1:],
                                                  self.paradigm_setup,
                                                  self.global_pathway,
@@ -1438,6 +1431,13 @@ class branchAnalyses(Target):
         self.total_analyses = total_analyses
     def run(self):
         os.chdir(self.directory)
+        logger = logging.getLogger("pds")
+        logger.setLevel(logging.DEBUG)
+        formatter = logging.Formatter("%(levelname)-8s %(name)-15s %(asctime)-25s %(message)s")
+        file_handler = logging.FileHandler("paradigm-shift.%s.log" % (os.getpid()))
+        file_handler.setFormatter(formatter)
+        file_handler.setLevel(logging.INFO)
+        logger.addHandler(file_handler)
         
         ## branch analyses
         report_list = []
@@ -1448,7 +1448,7 @@ class branchAnalyses(Target):
             os.mkdir('analysis')
         for analysis in self.analysis_list:
             if not os.path.exists('analysis/%s' % (analysis.directory)):
-                logger('Running analysis on %s (%s/%s)\n' % (analysis.analysis_name, self.run_analyses + 1, self.total_analyses), file = 'progress.log')
+                logger.info('Starting analysis on %s [%s/%s]\n' % (analysis.analysis_name, self.run_analyses + 1, self.total_analyses))
                 os.mkdir('analysis/%s' % (analysis.directory))
                 report_list.append(analysis.directory)
                 self.addChildTarget(branchFolds(analysis,
@@ -1457,7 +1457,8 @@ class branchAnalyses(Target):
                                                 self.parameters,
                                                 self.directory))
             else:
-                logger('Already performed analysis on %s (%s/%s)\n' % (analysis.analysis_name, self.run_analyses + 1, self.total_analyses), file = 'progress.log')
+                pass
+                logger.info('Already completed analysis on %s [%s/%s]\n' % (analysis.analysis_name, self.run_analyses + 1, self.total_analyses))
             self.run_analyses += 1
         if self.parameters.report_directory != None:
             self.setFollowOnTarget(makeReport(report_list,
@@ -1479,7 +1480,6 @@ class branchFolds(Target):
         
         ## cross validation
         if self.parameters.cross_validation:
-            logger('Performing cross-validation ...\n', file = 'progress.log')
             fold_map = {}
             for round in range(1, self.parameters.n_rounds + 1):
                 fold_map[round] = {}
@@ -1529,7 +1529,6 @@ class branchParameters(Target):
         if self.fold == 0:
             ps_directory = '%s/analysis/%s/final' % (self.directory, self.analysis.directory)
             os.chdir(ps_directory)
-            logger('Constructing final model ...\n', file = 'progress.log')
         else:
             ps_directory = '%s/analysis/%s/fold%s' % (self.directory, self.analysis.directory, self.fold)
             os.chdir(ps_directory)
@@ -1565,7 +1564,6 @@ class branchParameters(Target):
                         for fold in range(1, self.parameters.m_folds + 1):
                             fold_index = (round - 1)*self.parameters.m_folds + fold
                             shutil.rmtree('fold%s' % (fold_index))
-                    logger('Terminating analysis (did not pass cross-validation) ...\n', file = 'progress.log')
                     return
                 elif auc_average < self.parameters.cross_validation_threshold:
                     os.chdir('..')
@@ -1574,7 +1572,6 @@ class branchParameters(Target):
                         for fold in range(1, self.parameters.m_folds + 1):
                             fold_index = (round - 1)*self.parameters.m_folds + fold
                             shutil.rmtree('fold%s' % (fold_index))
-                    logger('Terminating analysis (did not pass cross-validation) ...\n', file = 'progress.log')
                     return
         
         ## branch parameters
@@ -1616,7 +1613,6 @@ class selectNeighborhood(Target):
         else:
             ps_directory = '%s/analysis/%s/fold%s/param_%s' % (self.directory, self.analysis.directory, self.fold, '_'.join([str(parameter) for parameter in self.current_parameters]))
             os.chdir(ps_directory)
-        logger('Selecting neighborhood ...\n', file = 'progress.log')
         
         ## use trained model if it exists
         selected_upstream = None
@@ -1628,7 +1624,6 @@ class selectNeighborhood(Target):
             else:
                 model_path = '%s/%s/%s' % (self.directory, self.parameters.model_directory, self.analysis.focus_node)
             if (os.path.exists('%s/upstream_pathway.tab' % (model_path))) and (os.path.exists('%s/downstream_pathway.tab' % (model_path))):
-                logger('Using trained model ...\n', file = 'progress.log')
                 selected_upstream = Pathway('%s/upstream_pathway.tab' % (model_path))
                 selected_downstream = Pathway('%s/downstream_pathway.tab' % (model_path))
                 selection_pass = True
@@ -1650,8 +1645,6 @@ class selectNeighborhood(Target):
                     downstream_pathway_map[focus_gene].appendPathway(group_pathways[focus_gene][index][1])
                 upstream_pathway_map[focus_gene].writeSPF('upstream_base.%s.tab' % (focus_gene))
                 downstream_pathway_map[focus_gene].writeSPF('downstream_base.%s.tab' % (focus_gene))
-                # upstream_pathway_map[focus_gene].writeSIF('upstream_base.%s.sif' % (focus_gene))
-                # downstream_pathway_map[focus_gene].writeSIF('downstream_base.%s.sif' % (focus_gene))
             
             ## identify all interaction paths relevant to the Paradigm-Shift task
             base_upstream_pathway = Pathway( ({}, {}) )
@@ -1738,6 +1731,10 @@ class selectNeighborhood(Target):
                                  random_seed = self.parameters.random_seed + self.fold)
             selected_upstream.writeSPF('upstream_pathway.tab')
             selected_downstream.writeSPF('downstream_pathway.tab')
+            selected_combined = Pathway( ({}, {}) )
+            selected_combined.appendPathway(selected_upstream)
+            selected_combined.appendPathway(selected_downstream)
+            selected_combined.writeSPF('combined_pathway.tab')
             if self.fold == 0:
                 self.addChildTarget(runParadigm(self.analysis,
                                                 self.paradigm_setup,
@@ -1768,7 +1765,6 @@ class runParadigm(Target):
     def run(self):
         os.chdir(self.directory)
         os.mkdir('paradigm')
-        logger('Running Paradigm inference ...\n', file = 'progress.log')
         
         ## copy paradigm files
         os.system('cp %s .' % (self.paradigm_setup.config))
@@ -1848,7 +1844,6 @@ class computeShifts(Target):
         else:
             ps_directory = "%s/analysis/%s/fold%s/param_%s" % (self.directory, self.analysis.directory, self.fold, '_'.join([str(parameter) for parameter in self.current_parameters]))
             os.chdir(ps_directory)
-        logger('Computing P-Shifts ...\n', file = 'progress.log')
         
         ## define sample groups
         training_all = self.training_samples
@@ -1880,15 +1875,15 @@ class computeShifts(Target):
             # normalized_null_downstream_ipls[null] = normalizeDataFrame(null_downstream_ipls[null].loc[[self.analysis.focus_node]], include_samples = training_negative)
         
         ## compute raw and normalized p-shifts
-        raw_shifts = {'real' : {}}
+        raw_shifts = {"real" : {}}
         for null in range(1, self.null_size + 1):
-            raw_shifts['null%s' % (null)] = {}
+            raw_shifts["null%s" % (null)] = {}
         for sample in self.paradigm_setup.samples:
             assert((sample in downstream_ipls.columns) and (sample in upstream_ipls.columns))
-            raw_shifts['real'][sample] = (downstream_ipls[sample][self.analysis.focus_node] - upstream_ipls[sample][self.analysis.focus_node])
+            raw_shifts["real"][sample] = (downstream_ipls[sample][self.analysis.focus_node] - upstream_ipls[sample][self.analysis.focus_node])
             for null in range(1, self.null_size + 1):
-                raw_shifts['null%s' % (null)][sample] = (null_downstream_ipls[null][sample][self.analysis.focus_node] - null_upstream_ipls[null][sample][self.analysis.focus_node])
-        pandas.DataFrame(raw_shifts).to_csv('all_shifts.tab', sep = '\t', index_label = 'id')
+                raw_shifts["null%s" % (null)][sample] = (null_downstream_ipls[null][sample][self.analysis.focus_node] - null_upstream_ipls[null][sample][self.analysis.focus_node])
+        pandas.DataFrame(raw_shifts).to_csv("all_shifts.tab", sep = "\t", index_label = "id")
         o = open('pshift.tab', 'w')
         o.write("> %s\tP-Shifts:Table\n" % (self.analysis.focus_node))
         o.write("# sample\tclass\tP-Shift\n")
@@ -1900,7 +1895,7 @@ class computeShifts(Target):
             else:
                 o.write("%s\t?\t%s\n" % (sample, raw_shifts['real'][sample]))
         o.close()
-        o = open('wildtype_shifts.tab', 'w')
+        o = open("wildtype_shifts.tab", "w")
         o.write("sample\tP-Shift\n")
         for sample in self.paradigm_setup.samples:
             if sample in training_negative + testing_negative:
@@ -2076,7 +2071,6 @@ class compareParameters(Target):
         if self.fold == 0:
             ps_directory = '%s/analysis/%s/final' % (self.directory, self.analysis.directory)
             os.chdir(ps_directory)
-            logger('Identifying the best parameters by training validation ...\n', file = 'progress.log')
         else:
             ps_directory = '%s/analysis/%s/fold%s' % (self.directory, self.analysis.directory, self.fold)
             os.chdir(ps_directory)
@@ -2125,11 +2119,12 @@ class generateOutput(Target):
     def run(self):
         ps_directory = '%s/analysis/%s' % (self.directory, self.analysis.directory)
         os.chdir(ps_directory)
-        logger('Generating output files ...\n', file = 'progress.log')
         
         ## copy tables
         os.system('cp final/param_%s/significance.tab significance.tab' % ('_'.join(self.best_parameters)))
         os.system('cp final/param_%s/pshift.tab pshift.tab' % ('_'.join(self.best_parameters)))
+        os.system('cp final/param_%s/wildtype_shifts.tab wildtype_shifts.tab' % ('_'.join(self.best_parameters)))
+        os.system('cp final/param_%s/combined_pathway.tab combined_pathway.tab' % ('_'.join(self.best_parameters)))
         # os.system('cp final/param_%s/normalized_pshift.tab normalized_pshift.tab' % ('_'.join(self.best_parameters)))
         
         ## output m-separation and significance plots
@@ -2160,7 +2155,6 @@ class generateOutput(Target):
                 fold_index = (round - 1)*self.parameters.m_folds + fold
                 if os.path.exists('fold%s' % (fold_index)):
                     shutil.rmtree('fold%s' % (fold_index))
-        logger('Completed analysis ...\n', file = 'progress.log')
 
 class makeReport(Target):
     def __init__(self, report_list, report_directory, directory):
@@ -2170,7 +2164,6 @@ class makeReport(Target):
         self.directory = directory
     def run(self):
         os.chdir(self.directory)
-        logger('... Done\n', file = 'progress.log')
         
         if not os.path.exists(self.report_directory):
             os.mkdir('%s' % (self.report_directory))
@@ -2200,9 +2193,17 @@ class makeReport(Target):
         #         system('cp analysis/%s/pshift* %s' % (gene, self.reportDir))
 
 def ps_main():
+    logger = logging.getLogger("pds")
+    logger.setLevel(logging.DEBUG)
+    formatter = logging.Formatter("%(levelname)-8s %(name)-15s %(asctime)-25s %(message)s")
+    file_handler = logging.FileHandler("paradigm-shift.%s.log" % (os.getpid()))
+    file_handler.setFormatter(formatter)
+    file_handler.setLevel(logging.INFO)
+    logger.addHandler(file_handler)
+    
     ## check for fresh run
     if os.path.exists('.jobTree'):
-        logging.warning("WARNING: '.jobTree' directory found, remove it first to start a fresh run\n")
+        logger.warning("WARNING: '.jobTree' directory found, remove it first to start a fresh run\n")
     
     ## parse arguments
     parser = OptionParser(usage = "%prog [options] paradigm_directory analysis_file")
@@ -2229,7 +2230,7 @@ def ps_main():
                       help = "Random seed used for null generation")
     
     options, args = parser.parse_args()
-    logging.info("options: %s" % (str(options)))
+    logger.info("Options: %s" % (str(options)))
     print "Using Batch System '%s'" % (options.batchSystem)
     
     assert(len(args) == 2)
@@ -2249,7 +2250,7 @@ def ps_main():
     elif os.path.isdir(paradigm_directory):
         paradigm_directory = os.path.abspath(paradigm_directory)
     else:
-        logging.error("ERROR: paradigm directory cannot be a regular file\n")
+        logger.error("ERROR: paradigm directory cannot be a regular file\n")
         sys.exit(1)
     paradigm_setup = ParadigmSetup(paradigm_directory.rstrip("/"),
                                    include_samples = options.include_samples,
@@ -2298,9 +2299,9 @@ def ps_main():
             if len(altered.positive_samples) >= parameters.min_alterations:
                 altered_list.append(altered)
             else:
-                logger('Insufficient alterations to run analysis on %s\n' % (",".join(altered.focus_genes)), file = 'progress.log')
+                logger.warning("Skipping analysis on %s - insufficient alterations\n" % (",".join(altered.focus_genes)))
         else:
-            logger('Insufficient pathway connections to run analysis on %s\n' % (",".join(altered.focus_genes)), file = 'progress.log')
+            logger.warning("Skipping analysis on %s - genes not in pathway\n" % (",".join(altered.focus_genes)))
     f.close()
     
     ## run
@@ -2322,12 +2323,18 @@ def ps_main():
         if options.jobTree == None:
             options.jobTree = './.jobTree'
         
+        jobtree_dir = options.jobTree.rstrip("/")
+        lasttree_dir = jobtree_dir + "_previous"
+        
         failed = s.startJobTree(options)
         if failed:
-            logger('%d jobs failed\n' % failed)
+            logger.warning("%d jobs failed" % (failed))
         else:
-            os.system('rm -rf .lastjobTree')
-            os.system('mv .jobTree .lastjobTree')
+            logger.info("All analyses completed")
+            if os.path.exists(lasttree_dir):
+                shutil.rmtree(lasttree_dir)
+            if os.path.exists(jobtree_dir):
+                shutil.move(jobtree_dir, lasttree_dir)
 
 if __name__ == '__main__':
     from paradigmSHIFT import *
