@@ -170,9 +170,9 @@ class Parameters:
     """
     def __init__(self):
         self.random_seed = 0
-        self.min_alterations = 20
+        self.min_alterations = 5
         self.in_parallel = False
-        self.n_rounds = 1
+        self.n_rounds = 5
         self.m_folds = 5
         self.search_distance = 2
         self.threshold = [0.84]
@@ -181,7 +181,7 @@ class Parameters:
         self.model_directory = None
         self.cross_validation = True
         self.cross_validation_two_sided = False
-        self.cross_validation_threshold = 0.55
+        self.cross_validation_threshold = 0.0
         self.separation_method = "tt"
         self.report_directory = "report"
     def importConfig(self, config_file):
@@ -410,6 +410,19 @@ class Pathway:
                                                                       set(append_pathway.interactions[source][target].split(";"))))
 
 ## functions
+def mergeLoggers(logging_directory = "./", logging_prefix = "paradigm-shift"):
+    import re
+    import glob
+    import fileinput
+    from time import strptime
+    
+    logging_directory = "./"
+    logger_files = glob.glob("%s/%s.*.log" % (logging_directory, logging_prefix))
+    lines = list(set(fileinput.input(logger_files)) - set(['\n']))
+    time_format = "%Y-%m-%d %H:%M:%S,%f"
+    for line in sorted(lines, key = lambda x: strptime(" ".join(x.split()[2:4]), time_format)):
+        print line
+
 def returnRows(input_file, sep = "\t", index = 0, header = True):
     """
     Returns the rows of a file without loading it into memory [2014-12-14]
@@ -1375,7 +1388,7 @@ class queueAnalyses(Target):
         self.total_analyses = total_analyses
     def run(self):
         os.chdir(self.directory)
-        logger = logging.getLogger("pds")
+        logger = logging.getLogger("paradigm-shift")
         logger.setLevel(logging.DEBUG)
         formatter = logging.Formatter("%(levelname)-8s %(name)-15s %(asctime)-25s %(message)s")
         file_handler = logging.FileHandler("paradigm-shift.%s.log" % (os.getpid()))
@@ -1430,7 +1443,7 @@ class branchAnalyses(Target):
         self.total_analyses = total_analyses
     def run(self):
         os.chdir(self.directory)
-        logger = logging.getLogger("pds")
+        logger = logging.getLogger("paradigm-shift")
         logger.setLevel(logging.DEBUG)
         formatter = logging.Formatter("%(levelname)-8s %(name)-15s %(asctime)-25s %(message)s")
         file_handler = logging.FileHandler("paradigm-shift.%s.log" % (os.getpid()))
@@ -2187,7 +2200,7 @@ class makeReport(Target):
         #         system("cp analysis/%s/pshift* %s" % (gene, self.reportDir))
 
 def ps_main():
-    logger = logging.getLogger("pds")
+    logger = logging.getLogger("paradigm-shift")
     logger.setLevel(logging.DEBUG)
     formatter = logging.Formatter("%(levelname)-8s %(name)-15s %(asctime)-25s %(message)s")
     file_handler = logging.FileHandler("paradigm-shift.%s.log" % (os.getpid()))
@@ -2286,10 +2299,10 @@ def ps_main():
                                   paradigm_setup.samples,
                                   pline[2].split(","),
                                   negative_samples = pline[3].split(","))
+        if include_features != None:
+            if len(set(altered.focus_genes) & set(include_features)) == 0:
+                continue
         if len(set(altered.focus_genes) & set(global_pathway.nodes)) == len(altered.focus_genes):
-            if include_features != None:
-                if len(set(altered.focus_genes) & set(include_features)) == 0:
-                    continue
             if len(altered.positive_samples) >= parameters.min_alterations:
                 altered_list.append(altered)
             else:
